@@ -1,18 +1,33 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.acceso_registro import schemas, service
+from app.acceso_registro.schemas import UserResponse
+from app.core.dependencies import get_current_user
+from app.acceso_registro.models import User
 
 router = APIRouter()
 
 
 # CU01 - Registrarse
-@router.post("/register")
-async def register():
-    return {"msg": "CU01 - register"}
+@router.post("/register", response_model=schemas.Token, status_code=status.HTTP_201_CREATED)
+async def register(data: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+    token, user = await service.registrar_usuario(data, db)
+    return schemas.Token(access_token=token, user=UserResponse.model_validate(user))
 
 
 # CU02 - Iniciar sesión
-@router.post("/login")
-async def login():
-    return {"msg": "CU02 - login"}
+@router.post("/login", response_model=schemas.Token)
+async def login(data: schemas.UserLogin, db: AsyncSession = Depends(get_db)):
+    token, user = await service.iniciar_sesion(data, db)
+    return schemas.Token(access_token=token, user=UserResponse.model_validate(user))
+
+
+# Perfil del usuario autenticado (útil para ambos clientes al iniciar)
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)):
+    return UserResponse.model_validate(current_user)
 
 
 # CU03 - Registrar vehículo
