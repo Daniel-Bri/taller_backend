@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Float, ForeignKey
 from sqlalchemy.sql import func
 from app.db.base import Base
 
@@ -13,4 +13,35 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Vehiculo(Base):
+    __tablename__ = "vehiculos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    placa = Column(String(20), unique=True, index=True, nullable=False)
+    marca = Column(String(100), nullable=False)
+    modelo = Column(String(100), nullable=False)
+    anio = Column(Integer, nullable=False)
+    color = Column(String(50), nullable=False)
+    activo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Taller(Base):
+    __tablename__ = "talleres"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    nombre = Column(String(200), nullable=False)
+    direccion = Column(String(500), nullable=False)
+    telefono = Column(String(20), nullable=True)
+    email_comercial = Column(String(255), nullable=True)
+    latitud = Column(Float, nullable=True)
+    longitud = Column(Float, nullable=True)
+    disponible = Column(Boolean, default=False)
+    estado = Column(String(20), default="pendiente")  # pendiente | aprobado | rechazado
+    rating = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

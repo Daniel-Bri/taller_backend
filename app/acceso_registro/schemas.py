@@ -4,6 +4,7 @@ from typing import Optional
 import re
 
 
+# ── Usuario ────────────────────────────────────────────────
 class UserCreate(BaseModel):
     email: str
     username: str
@@ -55,3 +56,75 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+# ── Vehículo ───────────────────────────────────────────────
+class VehiculoCreate(BaseModel):
+    placa: str
+    marca: str
+    modelo: str
+    anio: int
+    color: str
+
+    @field_validator("placa")
+    @classmethod
+    def placa_valida(cls, v: str) -> str:
+        v = v.strip().upper()
+        if len(v) < 5:
+            raise ValueError("La placa debe tener al menos 5 caracteres")
+        return v
+
+    @field_validator("anio")
+    @classmethod
+    def anio_valido(cls, v: int) -> int:
+        if v < 1900 or v > 2100:
+            raise ValueError("Año inválido")
+        return v
+
+
+class VehiculoResponse(BaseModel):
+    id: int
+    usuario_id: int
+    placa: str
+    marca: str
+    modelo: str
+    anio: int
+    color: str
+    activo: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Taller ─────────────────────────────────────────────────
+class TallerCreate(BaseModel):
+    nombre: str
+    direccion: str
+    telefono: Optional[str] = None
+    email_comercial: Optional[str] = None
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+
+    @field_validator("nombre")
+    @classmethod
+    def nombre_valido(cls, v: str) -> str:
+        if len(v.strip()) < 3:
+            raise ValueError("El nombre debe tener al menos 3 caracteres")
+        return v.strip()
+
+
+class TallerResponse(BaseModel):
+    id: int
+    usuario_id: int
+    nombre: str
+    direccion: str
+    telefono: Optional[str]
+    email_comercial: Optional[str]
+    latitud: Optional[float]
+    longitud: Optional[float]
+    disponible: bool
+    estado: str
+    rating: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
