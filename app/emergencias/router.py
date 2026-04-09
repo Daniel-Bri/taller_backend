@@ -1,33 +1,61 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.core.dependencies import get_current_user
+from app.acceso_registro.models import User
+from app.emergencias import schemas, service
+from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate
 
 router = APIRouter()
 
 
-# CU05 - Reportar emergencia
-@router.post("/")
-async def reportar_emergencia():
-    return {"msg": "CU05 - reportar emergencia"}
+# ── CU05 - Reportar emergencia ─────────────────────────────
+@router.post("/", response_model=IncidenteResponse, status_code=status.HTTP_201_CREATED)
+async def reportar_emergencia(
+    data: schemas.IncidenteCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    incidente = await service.crear_incidente(data, current_user.id, db)
+    return IncidenteResponse.model_validate(incidente)
 
 
-# CU06 - Enviar ubicación GPS
-@router.patch("/{emergencia_id}/ubicacion")
-async def enviar_ubicacion(emergencia_id: int):
-    return {"msg": f"CU06 - ubicacion emergencia {emergencia_id}"}
+# ── Listar mis incidentes ──────────────────────────────────
+@router.get("/mis-incidentes", response_model=list[IncidenteResponse])
+async def listar_mis_incidentes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    incidentes = await service.listar_incidentes_usuario(current_user.id, db)
+    return [IncidenteResponse.model_validate(i) for i in incidentes]
 
 
-# CU07 - Adjuntar fotos
-@router.post("/{emergencia_id}/fotos")
-async def adjuntar_fotos(emergencia_id: int):
-    return {"msg": f"CU07 - fotos emergencia {emergencia_id}"}
+# ── CU06 - Enviar ubicación GPS ────────────────────────────
+@router.patch("/{incidente_id}/ubicacion", response_model=IncidenteResponse)
+async def enviar_ubicacion(
+    incidente_id: int,
+    data: UbicacionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    incidente = await service.actualizar_ubicacion(incidente_id, current_user.id, data, db)
+    return IncidenteResponse.model_validate(incidente)
 
 
-# CU08 - Enviar audio
-@router.post("/{emergencia_id}/audio")
-async def enviar_audio(emergencia_id: int):
-    return {"msg": f"CU08 - audio emergencia {emergencia_id}"}
+# ── CU07 - Adjuntar fotos ──────────────────────────────────
+@router.post("/{incidente_id}/fotos")
+async def adjuntar_fotos(incidente_id: int):
+    return {"msg": f"CU07 - fotos emergencia {incidente_id}"}
 
 
-# CU09 - Agregar descripción texto
-@router.patch("/{emergencia_id}/descripcion")
-async def agregar_descripcion(emergencia_id: int):
-    return {"msg": f"CU09 - descripcion emergencia {emergencia_id}"}
+# ── CU08 - Enviar audio ────────────────────────────────────
+@router.post("/{incidente_id}/audio")
+async def enviar_audio(incidente_id: int):
+    return {"msg": f"CU08 - audio emergencia {incidente_id}"}
+
+
+# ── CU09 - Agregar descripción texto ──────────────────────
+@router.patch("/{incidente_id}/descripcion")
+async def agregar_descripcion(incidente_id: int):
+    return {"msg": f"CU09 - descripcion emergencia {incidente_id}"}

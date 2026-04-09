@@ -7,6 +7,7 @@ from app.db.base import Base
 
 # Importar modelos para que SQLAlchemy los registre antes de create_all
 import app.acceso_registro.models  # noqa: F401  (User, Vehiculo, Taller)
+import app.emergencias.models      # noqa: F401  (Incidente)
 
 from app.acceso_registro.router import router as acceso_router
 from app.talleres_tecnicos.router import router as talleres_router
