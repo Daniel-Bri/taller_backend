@@ -26,21 +26,28 @@ USUARIOS_INICIALES = [
         "username": "admin",
         "full_name": "Administrador",
         "password": "12345678",
-        "is_admin": True,
+        "role": "admin",
     },
     {
         "email": "cliente@taller.com",
         "username": "cliente",
         "full_name": "Cliente Demo",
         "password": "12345678",
-        "is_admin": False,
+        "role": "cliente",
     },
     {
         "email": "taller@taller.com",
         "username": "taller",
         "full_name": "Taller Demo",
         "password": "12345678",
-        "is_admin": False,
+        "role": "taller",
+    },
+    {
+        "email": "tecnico@taller.com",
+        "username": "tecnico",
+        "full_name": "Técnico Demo",
+        "password": "12345678",
+        "role": "tecnico",
     },
 ]
 
@@ -62,7 +69,7 @@ async def seed():
                 username=data["username"],
                 full_name=data["full_name"],
                 hashed_password=hash_password(data["password"]),
-                is_admin=data["is_admin"],
+                role=data["role"],
             )
             db.add(user)
             print(f"  [ok]   {data['email']} creado")
@@ -71,8 +78,9 @@ async def seed():
 
     print("\nUsuarios disponibles:")
     print("  admin@taller.com   / 12345678  (admin)")
-    print("  cliente@taller.com / 12345678")
-    print("  taller@taller.com  / 12345678")
+    print("  cliente@taller.com / 12345678  (cliente)")
+    print("  taller@taller.com  / 12345678  (taller)")
+    print("  tecnico@taller.com / 12345678  (tecnico)")
 
 
 if __name__ == "__main__":

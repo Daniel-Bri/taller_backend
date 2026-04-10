@@ -21,7 +21,9 @@ async def registrar_usuario(data: UserCreate, db: AsyncSession) -> tuple[str, Us
         email=data.email.lower(),
         username=data.username,
         full_name=data.full_name,
+        telefono=data.telefono,
         hashed_password=hash_password(data.password),
+        role="cliente",
     )
     db.add(user)
     await db.commit()
@@ -98,6 +100,7 @@ async def crear_taller(data: TallerCreate, user: User, db: AsyncSession) -> Tall
         longitud=data.longitud,
     )
     db.add(taller)
+    user.role = "taller"
     await db.commit()
     await db.refresh(taller)
     return taller

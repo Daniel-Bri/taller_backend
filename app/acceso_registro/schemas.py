@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     email: str
     username: str
     full_name: Optional[str] = None
+    telefono: Optional[str] = None
     password: str
 
     @field_validator("email")
@@ -45,8 +46,9 @@ class UserResponse(BaseModel):
     email: str
     username: str
     full_name: Optional[str]
+    telefono: Optional[str]
     is_active: bool
-    is_admin: bool
+    role: str
     created_at: datetime
 
     model_config = {"from_attributes": True}

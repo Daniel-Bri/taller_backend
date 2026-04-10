@@ -5,7 +5,7 @@ from typing import Optional
 from app.db.session import get_db
 from app.acceso_registro import schemas, service
 from app.acceso_registro.schemas import UserResponse, VehiculoResponse, TallerResponse
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_role
 from app.acceso_registro.models import User
 
 router = APIRouter()
@@ -64,7 +64,7 @@ async def eliminar_vehiculo(
 @router.post("/talleres", response_model=TallerResponse, status_code=status.HTTP_201_CREATED)
 async def registrar_taller(
     data: schemas.TallerCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("cliente")),
     db: AsyncSession = Depends(get_db),
 ):
     taller = await service.crear_taller(data, current_user, db)
@@ -73,7 +73,7 @@ async def registrar_taller(
 
 # ── CU33 - Listar usuarios (admin) ────────────────────────
 @router.get("/usuarios", response_model=list[UserResponse])
-async def listar_usuarios(current_user: User = Depends(get_current_user)):
+async def listar_usuarios(current_user: User = Depends(require_role("admin"))):
     return {"msg": "CU33 - listar usuarios"}
 
 
@@ -81,7 +81,7 @@ async def listar_usuarios(current_user: User = Depends(get_current_user)):
 @router.get("/talleres", response_model=list[TallerResponse])
 async def listar_talleres(
     estado: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     talleres = await service.listar_talleres(estado, db)
@@ -91,7 +91,7 @@ async def listar_talleres(
 @router.patch("/talleres/{taller_id}/aprobar", response_model=TallerResponse)
 async def aprobar_taller(
     taller_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     taller = await service.cambiar_estado_taller(taller_id, "aprobado", db)
@@ -101,7 +101,7 @@ async def aprobar_taller(
 @router.patch("/talleres/{taller_id}/rechazar", response_model=TallerResponse)
 async def rechazar_taller(
     taller_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     taller = await service.cambiar_estado_taller(taller_id, "rechazado", db)
