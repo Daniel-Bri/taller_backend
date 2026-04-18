@@ -1,33 +1,154 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.core.dependencies import get_current_user, require_role
+from app.acceso_registro.models import User
+from app.talleres_tecnicos import schemas, service
 
 router = APIRouter()
 
 
-# CU17 - Asignar técnico
-@router.post("/{solicitud_id}/asignar-tecnico")
-async def asignar_tecnico(solicitud_id: int):
-    return {"msg": f"CU17 - asignar tecnico a solicitud {solicitud_id}"}
+# ── CU16 · Info del taller propio ────────────────────────
+@router.get("/mi-taller", response_model=schemas.TallerInfoResponse)
+async def mi_taller(
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_taller_info(current_user.id, db)
 
 
-# CU18 - Actualizar estado del servicio
-@router.patch("/{solicitud_id}/estado")
-async def actualizar_estado(solicitud_id: int):
-    return {"msg": f"CU18 - actualizar estado {solicitud_id}"}
+# ── CU16 · Actualizar disponibilidad ─────────────────────
+@router.patch("/disponibilidad", response_model=schemas.TallerInfoResponse)
+async def actualizar_disponibilidad(
+    data: schemas.DisponibilidadUpdate,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.actualizar_disponibilidad(current_user.id, data.disponible, db)
 
 
-# CU19 - Gestionar disponibilidad
-@router.patch("/tecnicos/{tecnico_id}/disponibilidad")
-async def gestionar_disponibilidad(tecnico_id: int):
-    return {"msg": f"CU19 - disponibilidad tecnico {tecnico_id}"}
+# ── CU25 · Listar técnicos ─────────────────────────────────
+@router.get("/tecnicos", response_model=list[schemas.TecnicoResponse])
+async def listar_tecnicos(
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    tecnicos = await service.listar_tecnicos(taller.id, db)
+    return [schemas.TecnicoResponse.model_validate(t) for t in tecnicos]
 
 
-# CU27 - Registrar servicio realizado
-@router.post("/{solicitud_id}/servicio-realizado")
-async def registrar_servicio(solicitud_id: int):
-    return {"msg": f"CU27 - servicio realizado {solicitud_id}"}
+# ── CU25 · Registrar técnico ───────────────────────────────
+@router.post("/tecnicos", response_model=schemas.TecnicoResponse, status_code=status.HTTP_201_CREATED)
+async def registrar_tecnico(
+    data: schemas.TecnicoCreate,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    tecnico = await service.registrar_tecnico(taller.id, data, db)
+    return schemas.TecnicoResponse.model_validate(tecnico)
 
 
-# CU30 - Gestionar técnicos
-@router.get("/{taller_id}/tecnicos")
-async def listar_tecnicos(taller_id: int):
-    return {"msg": f"CU30 - tecnicos del taller {taller_id}"}
+# ── CU25 · Editar técnico ──────────────────────────────────
+@router.patch("/tecnicos/{tecnico_id}", response_model=schemas.TecnicoResponse)
+async def actualizar_tecnico(
+    tecnico_id: int,
+    data: schemas.TecnicoUpdate,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    tecnico = await service.actualizar_tecnico(tecnico_id, taller.id, data, db)
+    return schemas.TecnicoResponse.model_validate(tecnico)
+
+
+# ── CU25 · Desactivar técnico ──────────────────────────────
+@router.delete("/tecnicos/{tecnico_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def desactivar_tecnico(
+    tecnico_id: int,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    await service.desactivar_tecnico(tecnico_id, taller.id, db)
+
+
+# ── CU15 · Asignaciones activas ───────────────────────────
+@router.get("/asignaciones/activas", response_model=list[schemas.AsignacionResponse])
+async def listar_asignaciones_activas(
+    current_user: User = Depends(require_role("taller", "tecnico")),
+    db: AsyncSession = Depends(get_db),
+):
+    asignaciones = await service.listar_asignaciones_activas(current_user.id, current_user.role, db)
+    return [schemas.AsignacionResponse.model_validate(a) for a in asignaciones]
+
+
+# ── CU15 · Actualizar estado del servicio ─────────────────
+@router.patch("/asignaciones/{asignacion_id}/estado", response_model=schemas.AsignacionResponse)
+async def actualizar_estado_asignacion(
+    asignacion_id: int,
+    data: schemas.AsignacionEstadoUpdate,
+    current_user: User = Depends(require_role("taller", "tecnico")),
+    db: AsyncSession = Depends(get_db),
+):
+    asignacion = await service.actualizar_estado_asignacion(
+        asignacion_id, current_user.id, current_user.role, data, db
+    )
+    return schemas.AsignacionResponse.model_validate(asignacion)
+
+
+# ── CU22 · Asignaciones listas para cierre ────────────────
+@router.get("/servicios/listas", response_model=list[schemas.AsignacionResponse])
+async def asignaciones_listas(
+    current_user: User = Depends(require_role("taller", "tecnico")),
+    db: AsyncSession = Depends(get_db),
+):
+    asignaciones = await service.listar_asignaciones_listas(current_user.id, current_user.role, db)
+    return [schemas.AsignacionResponse.model_validate(a) for a in asignaciones]
+
+
+# ── CU22 · Registrar servicio realizado y cierre ──────────
+@router.post("/servicios", response_model=schemas.ServicioRealizadoResponse, status_code=status.HTTP_201_CREATED)
+async def registrar_servicio(
+    data: schemas.ServicioRealizadoCreate,
+    current_user: User = Depends(require_role("taller", "tecnico")),
+    db: AsyncSession = Depends(get_db),
+):
+    servicio = await service.registrar_servicio_y_cerrar(current_user.id, current_user.role, data, db)
+    return schemas.ServicioRealizadoResponse.model_validate(servicio)
+
+
+# ── CU22 · Historial de servicios realizados ──────────────
+@router.get("/servicios", response_model=list[schemas.ServicioRealizadoResponse])
+async def listar_servicios(
+    current_user: User = Depends(require_role("taller", "tecnico")),
+    db: AsyncSession = Depends(get_db),
+):
+    servicios = await service.listar_servicios_realizados(current_user.id, current_user.role, db)
+    return [schemas.ServicioRealizadoResponse.model_validate(s) for s in servicios]
+
+
+# ── CU25 · Solicitudes pendientes de asignar técnico ───────
+@router.get("/asignaciones/pendientes", response_model=list[schemas.AsignacionResponse])
+async def listar_asignaciones_pendientes(
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    asignaciones = await service.listar_asignaciones_sin_tecnico(taller.id, db)
+    return [schemas.AsignacionResponse.model_validate(a) for a in asignaciones]
+
+
+# ── CU25 · Asignar técnico a solicitud ────────────────────
+@router.patch("/asignaciones/{asignacion_id}/asignar-tecnico", response_model=schemas.AsignacionResponse)
+async def asignar_tecnico(
+    asignacion_id: int,
+    data: schemas.AsignarTecnicoPayload,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await service.get_taller_by_user(current_user.id, db)
+    asignacion = await service.asignar_tecnico_a_solicitud(asignacion_id, taller.id, data.tecnico_id, db)
+    return schemas.AsignacionResponse.model_validate(asignacion)
