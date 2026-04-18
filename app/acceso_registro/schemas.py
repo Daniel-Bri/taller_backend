@@ -98,6 +98,33 @@ class VehiculoResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VehiculoUpdate(BaseModel):
+    placa: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
+    anio: Optional[int] = None
+    color: Optional[str] = None
+
+    @field_validator("placa")
+    @classmethod
+    def placa_valida(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if len(s) < 5:
+            raise ValueError("La placa debe tener al menos 5 caracteres")
+        return s
+
+    @field_validator("anio")
+    @classmethod
+    def anio_valido(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return None
+        if v < 1900 or v > 2100:
+            raise ValueError("Año inválido")
+        return v
+
+
 # ── Taller ─────────────────────────────────────────────────
 class TallerCreate(BaseModel):
     nombre: str

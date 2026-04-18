@@ -3,7 +3,7 @@ from sqlalchemy import select
 from fastapi import HTTPException, status
 
 from app.acceso_registro.models import User, Vehiculo, Taller
-from app.acceso_registro.schemas import UserCreate, UserLogin, VehiculoCreate, TallerCreate
+from app.acceso_registro.schemas import UserCreate, UserLogin, VehiculoCreate, VehiculoUpdate, TallerCreate
 from app.core.security import hash_password, verify_password, create_access_token
 
 
@@ -71,6 +71,43 @@ async def listar_vehiculos_usuario(usuario_id: int, db: AsyncSession) -> list[Ve
         select(Vehiculo).where(Vehiculo.usuario_id == usuario_id, Vehiculo.activo == True)
     )
     return list(result.scalars().all())
+
+
+async def actualizar_vehiculo(
+    vehiculo_id: int, usuario_id: int, data: VehiculoUpdate, db: AsyncSession
+) -> Vehiculo:
+    if all(
+        getattr(data, f) is None
+        for f in ("placa", "marca", "modelo", "anio", "color")
+    ):
+        raise HTTPException(status_code=400, detail="Indique al menos un campo a actualizar")
+
+    result = await db.execute(
+        select(Vehiculo).where(
+            Vehiculo.id == vehiculo_id, Vehiculo.usuario_id == usuario_id, Vehiculo.activo == True
+        )
+    )
+    vehiculo = result.scalar_one_or_none()
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+
+    if data.placa is not None and data.placa != vehiculo.placa:
+        r2 = await db.execute(select(Vehiculo).where(Vehiculo.placa == data.placa, Vehiculo.id != vehiculo_id))
+        if r2.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="La placa ya está registrada en el sistema")
+        vehiculo.placa = data.placa
+    if data.marca is not None:
+        vehiculo.marca = data.marca.strip()
+    if data.modelo is not None:
+        vehiculo.modelo = data.modelo.strip()
+    if data.anio is not None:
+        vehiculo.anio = data.anio
+    if data.color is not None:
+        vehiculo.color = data.color.strip()
+
+    await db.commit()
+    await db.refresh(vehiculo)
+    return vehiculo
 
 
 async def eliminar_vehiculo(vehiculo_id: int, usuario_id: int, db: AsyncSession) -> None:

@@ -4,7 +4,7 @@ from typing import Optional
 
 from app.db.session import get_db
 from app.acceso_registro import schemas, service
-from app.acceso_registro.schemas import UserResponse, VehiculoResponse, TallerResponse
+from app.acceso_registro.schemas import UserResponse, VehiculoResponse, VehiculoUpdate, TallerResponse
 from app.core.dependencies import get_current_user, require_role
 from app.acceso_registro.models import User
 
@@ -49,6 +49,17 @@ async def listar_vehiculos(
 ):
     vehiculos = await service.listar_vehiculos_usuario(current_user.id, db)
     return [VehiculoResponse.model_validate(v) for v in vehiculos]
+
+
+@router.patch("/vehiculos/{vehiculo_id}", response_model=VehiculoResponse)
+async def actualizar_vehiculo(
+    vehiculo_id: int,
+    data: VehiculoUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    vehiculo = await service.actualizar_vehiculo(vehiculo_id, current_user.id, data, db)
+    return VehiculoResponse.model_validate(vehiculo)
 
 
 @router.delete("/vehiculos/{vehiculo_id}", status_code=status.HTTP_204_NO_CONTENT)
