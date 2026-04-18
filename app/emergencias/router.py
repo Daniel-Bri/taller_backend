@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.acceso_registro.models import User
 from app.emergencias import schemas, service
-from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate
+from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate, DescripcionUpdate
+from app.emergencias.service import public_foto_url
 
 router = APIRouter()
 
@@ -31,6 +32,15 @@ async def listar_mis_incidentes(
     return [IncidenteResponse.model_validate(i) for i in incidentes]
 
 
+# ── CU10 · Mis solicitudes (incidente + asignación + fotos) ─
+@router.get("/mis-solicitudes", response_model=list[schemas.MisSolicitudItem])
+async def mis_solicitudes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.listar_mis_solicitudes_cliente(current_user.id, db)
+
+
 # ── CU06 - Enviar ubicación GPS ────────────────────────────
 @router.patch("/{incidente_id}/ubicacion", response_model=IncidenteResponse)
 async def enviar_ubicacion(
@@ -44,9 +54,24 @@ async def enviar_ubicacion(
 
 
 # ── CU07 - Adjuntar fotos ──────────────────────────────────
-@router.post("/{incidente_id}/fotos")
-async def adjuntar_fotos(incidente_id: int):
-    return {"msg": f"CU07 - fotos emergencia {incidente_id}"}
+@router.post(
+    "/{incidente_id}/fotos",
+    response_model=schemas.IncidenteFotoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def adjuntar_fotos(
+    incidente_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    row = await service.adjuntar_foto_incidente(incidente_id, current_user.id, file, db)
+    return schemas.IncidenteFotoResponse(
+        id=row.id,
+        incidente_id=row.incidente_id,
+        url=public_foto_url(row.url_path),
+        created_at=row.created_at,
+    )
 
 
 # ── CU08 - Enviar audio ────────────────────────────────────
@@ -56,6 +81,12 @@ async def enviar_audio(incidente_id: int):
 
 
 # ── CU09 - Agregar descripción texto ──────────────────────
-@router.patch("/{incidente_id}/descripcion")
-async def agregar_descripcion(incidente_id: int):
-    return {"msg": f"CU09 - descripcion emergencia {incidente_id}"}
+@router.patch("/{incidente_id}/descripcion", response_model=IncidenteResponse)
+async def agregar_descripcion(
+    incidente_id: int,
+    data: DescripcionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    incidente = await service.actualizar_descripcion(incidente_id, current_user.id, data, db)
+    return IncidenteResponse.model_validate(incidente)

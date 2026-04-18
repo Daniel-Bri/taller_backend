@@ -1,13 +1,16 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.db.session import engine
 from app.db.base import Base
 
 # Importar modelos para que SQLAlchemy los registre antes de create_all
 import app.acceso_registro.models   # noqa: F401  (User, Vehiculo, Taller)
-import app.emergencias.models       # noqa: F401  (Incidente)
+import app.emergencias.models       # noqa: F401  (Incidente, IncidenteFoto)
 import app.talleres_tecnicos.models  # noqa: F401  (Tecnico, Asignacion)
 import app.cotizacion_pagos.models   # noqa: F401  (Cotizacion)
 
@@ -45,6 +48,10 @@ app.include_router(solicitudes_router,  prefix="/api/solicitudes",  tags=["Solic
 app.include_router(pagos_router,        prefix="/api/pagos",        tags=["Cotización y Pagos"])
 app.include_router(comunicacion_router, prefix="/api/comunicacion", tags=["Comunicación"])
 app.include_router(reportes_router,     prefix="/api/reportes",     tags=["Reportes"])
+
+_uploads = Path(__file__).resolve().parent.parent / "uploads"
+_uploads.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_uploads)), name="uploads")
 
 
 @app.get("/")
