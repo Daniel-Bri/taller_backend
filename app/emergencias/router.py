@@ -6,6 +6,7 @@ from app.core.dependencies import get_current_user
 from app.acceso_registro.models import User
 from app.emergencias import schemas, service
 from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate
+from typing import Any
 
 router = APIRouter()
 
@@ -19,6 +20,15 @@ async def reportar_emergencia(
 ):
     incidente = await service.crear_incidente(data, current_user.id, db)
     return IncidenteResponse.model_validate(incidente)
+
+
+# ── CU10 - Mis solicitudes (incidente + asignación + fotos) ───────────────
+@router.get("/mis-solicitudes", response_model=list[dict[str, Any]])
+async def listar_mis_solicitudes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.listar_mis_solicitudes(current_user.id, db)
 
 
 # ── Listar mis incidentes ──────────────────────────────────
