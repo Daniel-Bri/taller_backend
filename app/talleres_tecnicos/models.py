@@ -15,6 +15,10 @@ class Tecnico(Base):
     estado        = Column(String(20), default="disponible")   # disponible | ocupado | inactivo
     activo        = Column(Boolean, default=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    # CU17 — ubicación en tiempo real (nullable hasta que el técnico comparta)
+    latitud              = Column(Float, nullable=True)
+    longitud             = Column(Float, nullable=True)
+    ultima_actualizacion = Column(DateTime(timezone=True), nullable=True)
 
 
 class Asignacion(Base):
