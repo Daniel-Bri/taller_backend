@@ -152,3 +152,14 @@ async def asignar_tecnico(
     taller = await service.get_taller_by_user(current_user.id, db)
     asignacion = await service.asignar_tecnico_a_solicitud(asignacion_id, taller.id, data.tecnico_id, db)
     return schemas.AsignacionResponse.model_validate(asignacion)
+
+
+# ── CU31 · Confirmar llegada del técnico (cliente) ─────────
+@router.patch("/asignaciones/{asignacion_id}/confirmar-llegada", response_model=schemas.AsignacionResponse)
+async def confirmar_llegada(
+    asignacion_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    asignacion = await service.confirmar_llegada_tecnico(asignacion_id, current_user.id, db)
+    return schemas.AsignacionResponse.model_validate(asignacion)

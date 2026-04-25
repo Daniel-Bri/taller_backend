@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+import math
 from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.acceso_registro import schemas, service
-from app.acceso_registro.schemas import UserResponse, VehiculoResponse, TallerResponse
+from app.acceso_registro.schemas import UserResponse, VehiculoResponse, TallerResponse, UserListResponse
 from app.core.dependencies import get_current_user, require_role
 from app.acceso_registro.models import User
 
@@ -13,15 +15,23 @@ router = APIRouter()
 
 # ── CU01 - Registrarse ─────────────────────────────────────
 @router.post("/register", response_model=schemas.Token, status_code=status.HTTP_201_CREATED)
-async def register(data: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(data: schemas.UserCreate, request: Request, db: AsyncSession = Depends(get_db)):
     token, user = await service.registrar_usuario(data, db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="register", usuario_id=user.id,
+                     usuario_nombre=user.username, entidad="User", entidad_id=user.id,
+                     ip=request.client.host if request.client else None)
     return schemas.Token(access_token=token, user=UserResponse.model_validate(user))
 
 
 # ── CU02 - Iniciar sesión ──────────────────────────────────
 @router.post("/login", response_model=schemas.Token)
-async def login(data: schemas.UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(data: schemas.UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
     token, user = await service.iniciar_sesion(data, db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="login", usuario_id=user.id,
+                     usuario_nombre=user.username, entidad="User", entidad_id=user.id,
+                     ip=request.client.host if request.client else None)
     return schemas.Token(access_token=token, user=UserResponse.model_validate(user))
 
 
@@ -60,6 +70,15 @@ async def eliminar_vehiculo(
     await service.eliminar_vehiculo(vehiculo_id, current_user.id, db)
 
 
+# ── CU32 - Recordatorios de mantenimiento ─────────────────
+@router.get("/vehiculos/mantenimiento")
+async def recordatorios_mantenimiento(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.obtener_recordatorios_mantenimiento(current_user.id, db)
+
+
 # ── CU12 - Registrar taller ────────────────────────────────
 @router.post("/talleres", response_model=TallerResponse, status_code=status.HTTP_201_CREATED)
 async def registrar_taller(
@@ -71,10 +90,83 @@ async def registrar_taller(
     return TallerResponse.model_validate(taller)
 
 
-# ── CU33 - Listar usuarios (admin) ────────────────────────
-@router.get("/usuarios", response_model=list[UserResponse])
-async def listar_usuarios(current_user: User = Depends(require_role("admin"))):
-    return {"msg": "CU33 - listar usuarios"}
+# ── CU27 - Listar usuarios (admin) ────────────────────────
+@router.get("/usuarios", response_model=UserListResponse)
+async def listar_usuarios(
+    role: Optional[str] = Query(None),
+    activo: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    usuarios, total = await service.listar_usuarios(db, role, activo, search, page, size)
+    pages = math.ceil(total / size) if total > 0 else 1
+    return UserListResponse(
+        items=[UserResponse.model_validate(u) for u in usuarios],
+        total=total, page=page, size=size, pages=pages,
+    )
+
+
+@router.get("/usuarios/{user_id}", response_model=UserResponse)
+async def obtener_usuario(
+    user_id: int,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await service.obtener_usuario(user_id, db)
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/usuarios/{user_id}", response_model=UserResponse)
+async def actualizar_usuario(
+    user_id: int,
+    data: schemas.UserUpdate,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    before = await service.obtener_usuario(user_id, db)
+    before_data = {"email": before.email, "full_name": before.full_name,
+                   "telefono": before.telefono, "role": before.role}
+    user = await service.actualizar_usuario(user_id, data, current_user.id, db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="update_user", usuario_id=current_user.id,
+                     usuario_nombre=current_user.username, entidad="User", entidad_id=user_id,
+                     detalle={"antes": before_data, "despues": data.model_dump(exclude_none=True)},
+                     ip=request.client.host if request.client else None)
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/usuarios/{user_id}/activar", response_model=UserResponse)
+async def activar_usuario(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await service.toggle_usuario_activo(user_id, True, current_user.id, db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="activate_user", usuario_id=current_user.id,
+                     usuario_nombre=current_user.username, entidad="User", entidad_id=user_id,
+                     ip=request.client.host if request.client else None)
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/usuarios/{user_id}/desactivar", response_model=UserResponse)
+async def desactivar_usuario(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await service.toggle_usuario_activo(user_id, False, current_user.id, db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="deactivate_user", usuario_id=current_user.id,
+                     usuario_nombre=current_user.username, entidad="User", entidad_id=user_id,
+                     ip=request.client.host if request.client else None)
+    return UserResponse.model_validate(user)
 
 
 # ── CU34 - Aprobar / rechazar taller ──────────────────────
@@ -91,18 +183,28 @@ async def listar_talleres(
 @router.patch("/talleres/{taller_id}/aprobar", response_model=TallerResponse)
 async def aprobar_taller(
     taller_id: int,
+    request: Request,
     current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     taller = await service.cambiar_estado_taller(taller_id, "aprobado", db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="approve_taller", usuario_id=current_user.id,
+                     usuario_nombre=current_user.username, entidad="Taller", entidad_id=taller_id,
+                     ip=request.client.host if request.client else None)
     return TallerResponse.model_validate(taller)
 
 
 @router.patch("/talleres/{taller_id}/rechazar", response_model=TallerResponse)
 async def rechazar_taller(
     taller_id: int,
+    request: Request,
     current_user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     taller = await service.cambiar_estado_taller(taller_id, "rechazado", db)
+    from app.reportes.service import log_evento
+    await log_evento(db, accion="reject_taller", usuario_id=current_user.id,
+                     usuario_nombre=current_user.username, entidad="Taller", entidad_id=taller_id,
+                     ip=request.client.host if request.client else None)
     return TallerResponse.model_validate(taller)

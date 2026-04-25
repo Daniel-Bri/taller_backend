@@ -130,3 +130,50 @@ class TallerResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── CU27 - Gestionar usuarios ──────────────────────────────
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def email_valido(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Correo electrónico inválido")
+        return v.lower()
+
+    @field_validator("role")
+    @classmethod
+    def role_valido(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in ("cliente", "taller", "tecnico", "admin"):
+            raise ValueError("Rol inválido")
+        return v
+
+
+class UserListResponse(BaseModel):
+    items: list[UserResponse]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+# ── CU32 - Recordatorios de mantenimiento ─────────────────
+class RecordatorioMantenimiento(BaseModel):
+    vehiculo_id: int
+    placa: str
+    marca: str
+    modelo: str
+    anio: int
+    dias_desde_ultimo_servicio: Optional[int]
+    ultimo_servicio: Optional[datetime]
+    mensaje: str
+    urgencia: str  # alta | media | sin_historial

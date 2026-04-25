@@ -1,4 +1,7 @@
+from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -6,9 +9,13 @@ from app.core.dependencies import get_current_user
 from app.acceso_registro.models import User
 from app.emergencias import schemas, service
 from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate
-from typing import Any
 
 router = APIRouter()
+
+
+class SOSCreate(BaseModel):
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
 
 
 # ── CU05 - Reportar emergencia ─────────────────────────────
@@ -69,3 +76,16 @@ async def enviar_audio(incidente_id: int):
 @router.patch("/{incidente_id}/descripcion")
 async def agregar_descripcion(incidente_id: int):
     return {"msg": f"CU09 - descripcion emergencia {incidente_id}"}
+
+
+# ── CU30 - Botón SOS ──────────────────────────────────────
+@router.post("/sos", response_model=IncidenteResponse, status_code=status.HTTP_201_CREATED)
+async def boton_sos(
+    data: SOSCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    incidente = await service.crear_incidente_sos(
+        current_user.id, data.latitud, data.longitud, db
+    )
+    return IncidenteResponse.model_validate(incidente)

@@ -99,6 +99,39 @@ async def listar_mis_solicitudes(usuario_id: int, db: AsyncSession) -> list[dict
     return rows
 
 
+async def crear_incidente_sos(
+    usuario_id: int,
+    latitud: float | None,
+    longitud: float | None,
+    db: AsyncSession,
+) -> Incidente:
+    vehiculo_result = await db.execute(
+        select(Vehiculo)
+        .where(Vehiculo.usuario_id == usuario_id, Vehiculo.activo == True)
+        .order_by(Vehiculo.created_at.asc())
+    )
+    vehiculo = vehiculo_result.scalars().first()
+    if not vehiculo:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Debes tener al menos un vehículo registrado para usar el botón SOS",
+        )
+
+    incidente = Incidente(
+        usuario_id=usuario_id,
+        vehiculo_id=vehiculo.id,
+        descripcion="🆘 Alerta SOS — Emergencia urgente enviada desde la app",
+        prioridad="alta",
+        latitud=latitud,
+        longitud=longitud,
+    )
+    db.add(incidente)
+    await db.commit()
+    await db.refresh(incidente)
+    return incidente
+
+
 async def actualizar_ubicacion(
     incidente_id: int, usuario_id: int, data: UbicacionUpdate, db: AsyncSession
 ) -> Incidente:

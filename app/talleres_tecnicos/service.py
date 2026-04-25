@@ -295,6 +295,41 @@ async def listar_servicios_realizados(user_id: int, role: str, db: AsyncSession)
     return list(result.scalars().all())
 
 
+# ── CU31 · Confirmar llegada del técnico (cliente) ─────────
+async def confirmar_llegada_tecnico(
+    asignacion_id: int, usuario_id: int, db: AsyncSession
+) -> Asignacion:
+    from app.emergencias.models import Incidente
+    result = await db.execute(select(Asignacion).where(Asignacion.id == asignacion_id))
+    asignacion = result.scalar_one_or_none()
+    if not asignacion:
+        raise HTTPException(status_code=404, detail="Asignación no encontrada")
+
+    # Verificar que el incidente pertenece al usuario
+    inc_result = await db.execute(
+        select(Incidente).where(
+            Incidente.id == asignacion.incidente_id,
+            Incidente.usuario_id == usuario_id,
+        )
+    )
+    if not inc_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="No tienes permiso sobre esta asignación")
+
+    if asignacion.estado == "en_sitio":
+        raise HTTPException(status_code=400, detail="La llegada del técnico ya fue confirmada")
+
+    if asignacion.estado not in ("aceptado", "en_camino"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No puedes confirmar llegada en estado '{asignacion.estado}'",
+        )
+
+    asignacion.estado = "en_sitio"
+    await db.commit()
+    await db.refresh(asignacion)
+    return asignacion
+
+
 async def asignar_tecnico_a_solicitud(
     asignacion_id: int, taller_id: int, tecnico_id: int, db: AsyncSession
 ) -> Asignacion:
