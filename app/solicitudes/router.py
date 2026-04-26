@@ -8,7 +8,11 @@ from app.acceso_registro.models import User
 from app.talleres_tecnicos import service as taller_service
 from app.talleres_tecnicos.schemas import AsignacionResponse
 from app.solicitudes import service as solicitudes_service
-from app.solicitudes.schemas import SolicitudDisponibleResponse, AceptarSolicitudBody
+from app.solicitudes.schemas import (
+    SolicitudDisponibleResponse,
+    AceptarSolicitudBody,
+    SolicitudDetalleResponse,
+)
 
 router = APIRouter()
 
@@ -51,9 +55,14 @@ async def aceptar(
 
 
 # CU14 - Ver detalle del incidente
-@router.get("/{solicitud_id}")
-async def detalle(solicitud_id: int):
-    return {"msg": f"CU14 - detalle solicitud {solicitud_id}"}
+@router.get("/{solicitud_id}", response_model=SolicitudDetalleResponse)
+async def detalle(
+    solicitud_id: int,
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    taller = await taller_service.get_taller_by_user(current_user.id, db)
+    return await solicitudes_service.detalle_incidente_para_taller(solicitud_id, taller, db)
 
 
 # CU16 - Rechazar solicitud

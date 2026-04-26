@@ -1,12 +1,18 @@
-from fastapi import APIRouter, Depends, status, File, UploadFile
+from fastapi import APIRouter, Depends, status, File, UploadFile, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.acceso_registro.models import User
 from app.emergencias import schemas, service
-from app.emergencias.schemas import IncidenteResponse, UbicacionUpdate, DescripcionUpdate
-from app.emergencias.service import public_foto_url
+from app.emergencias.schemas import (
+    IncidenteResponse,
+    UbicacionUpdate,
+    DescripcionUpdate,
+    GestionSolicitudPayload,
+    GestionSolicitudResponse,
+)
+from app.emergencias.service import public_foto_url, public_audio_url
 
 router = APIRouter()
 
@@ -75,9 +81,32 @@ async def adjuntar_fotos(
 
 
 # ── CU08 - Enviar audio ────────────────────────────────────
-@router.post("/{incidente_id}/audio")
-async def enviar_audio(incidente_id: int):
-    return {"msg": f"CU08 - audio emergencia {incidente_id}"}
+@router.post(
+    "/{incidente_id}/audio",
+    response_model=schemas.IncidenteAudioResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def enviar_audio(
+    incidente_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+    duracion_segundos: int | None = Form(default=None),
+):
+    row = await service.adjuntar_audio_incidente(
+        incidente_id=incidente_id,
+        usuario_id=current_user.id,
+        file=file,
+        duracion_segundos=duracion_segundos,
+        db=db,
+    )
+    return schemas.IncidenteAudioResponse(
+        id=row.id,
+        incidente_id=row.incidente_id,
+        url=public_audio_url(row.url_path),
+        duracion_segundos=row.duracion_segundos,
+        created_at=row.created_at,
+    )
 
 
 # ── CU09 - Agregar descripción texto ──────────────────────
@@ -90,3 +119,19 @@ async def agregar_descripcion(
 ):
     incidente = await service.actualizar_descripcion(incidente_id, current_user.id, data, db)
     return IncidenteResponse.model_validate(incidente)
+
+
+# ── CU11 - Gestionar solicitud (cliente) ───────────────────
+@router.put("/{incidente_id}/estado", response_model=GestionSolicitudResponse)
+async def gestionar_solicitud(
+    incidente_id: int,
+    data: GestionSolicitudPayload,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.gestionar_solicitud_cliente(
+        incidente_id=incidente_id,
+        usuario_id=current_user.id,
+        data=data,
+        db=db,
+    )

@@ -52,11 +52,41 @@ class IncidenteFotoResponse(BaseModel):
     created_at: datetime
 
 
+class IncidenteAudioResponse(BaseModel):
+    id: int
+    incidente_id: int
+    url: str
+    duracion_segundos: Optional[int] = None
+    created_at: datetime
+
+
+class GestionSolicitudPayload(BaseModel):
+    estado: str
+    comentario: Optional[str] = None
+
+    @field_validator("estado")
+    @classmethod
+    def estado_valido(cls, v: str) -> str:
+        if v not in ("aceptado", "rechazado", "cancelado"):
+            raise ValueError("El estado debe ser aceptado, rechazado o cancelado")
+        return v
+
+
+class GestionSolicitudResponse(BaseModel):
+    incidente_id: int
+    estado_anterior: str
+    estado_nuevo: str
+    accion: str
+    updated_at: datetime
+
+
 class AsignacionResumenCliente(BaseModel):
     id: int
     estado: str
     eta: Optional[int] = None
     taller_nombre: str
+    taller_latitud: Optional[float] = None
+    taller_longitud: Optional[float] = None
 
 
 class IncidenteResponse(BaseModel):
@@ -77,3 +107,4 @@ class MisSolicitudItem(BaseModel):
     incidente: IncidenteResponse
     asignacion: Optional[AsignacionResumenCliente] = None
     fotos_urls: list[str] = []
+    audios_urls: list[str] = []

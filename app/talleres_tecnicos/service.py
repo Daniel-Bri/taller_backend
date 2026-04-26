@@ -5,6 +5,8 @@ from fastapi import HTTPException
 
 from app.talleres_tecnicos.models import Tecnico, Asignacion, ServicioRealizado
 from app.acceso_registro.models import Taller
+from app.emergencias.models import Incidente
+from app.comunicacion import service as notif_service
 from app.talleres_tecnicos.schemas import (
     TecnicoCreate, TecnicoUpdate, TallerInfoResponse,
     AsignacionEstadoUpdate, TRANSICIONES_VALIDAS,
@@ -182,9 +184,51 @@ async def actualizar_estado_asignacion(
                    f"Permitidos: {', '.join(sorted(permitidos)) or 'ninguno'}",
         )
 
+    estado_anterior = asignacion.estado
     asignacion.estado = data.estado
     if data.observacion:
         asignacion.observacion = data.observacion
+
+    # Sincronizar incidente + notificar al cliente
+    ir = await db.execute(select(Incidente).where(Incidente.id == asignacion.incidente_id))
+    inc = ir.scalar_one_or_none()
+    if inc:
+        # Mantener incidente en proceso mientras el servicio avanza
+        if data.estado in ("en_camino", "en_sitio", "en_reparacion"):
+            if inc.estado != "cancelado":
+                inc.estado = "en_proceso"
+        elif data.estado == "finalizado":
+            inc.estado = "resuelto"
+        elif data.estado == "cancelado":
+            inc.estado = "cancelado"
+
+        titulo_map = {
+            "aceptado": "Solicitud aceptada",
+            "en_camino": "Técnico en camino",
+            "en_sitio": "Técnico en el lugar",
+            "en_reparacion": "Vehículo en reparación",
+            "finalizado": "Servicio finalizado",
+            "cancelado": "Servicio cancelado",
+        }
+        msg_map = {
+            "aceptado": f"Tu solicitud #{inc.id} fue aceptada y será atendida.",
+            "en_camino": f"El técnico va en camino a tu ubicación (solicitud #{inc.id}).",
+            "en_sitio": f"El técnico ya llegó al lugar (solicitud #{inc.id}).",
+            "en_reparacion": f"Tu vehículo está en reparación (solicitud #{inc.id}).",
+            "finalizado": f"Tu servicio fue finalizado (solicitud #{inc.id}).",
+            "cancelado": f"Tu servicio fue cancelado (solicitud #{inc.id}).",
+        }
+        tipo = f"asignacion_{data.estado}"
+        await notif_service.crear_notificacion(
+            user_id=inc.usuario_id,
+            titulo=titulo_map.get(data.estado, "Actualización de servicio"),
+            mensaje=msg_map.get(data.estado, f"La solicitud #{inc.id} cambió a {data.estado}"),
+            tipo=tipo,
+            incidente_id=inc.id,
+            db=db,
+            commit=False,
+        )
+
     await db.commit()
     await db.refresh(asignacion)
     return asignacion
@@ -259,6 +303,21 @@ async def registrar_servicio_y_cerrar(
     db.add(servicio)
 
     asignacion.estado = "finalizado"
+
+    # Sincronizar incidente a resuelto + notificar cliente (cierre formal)
+    ir = await db.execute(select(Incidente).where(Incidente.id == asignacion.incidente_id))
+    inc = ir.scalar_one_or_none()
+    if inc:
+        inc.estado = "resuelto"
+        await notif_service.crear_notificacion(
+            user_id=inc.usuario_id,
+            titulo="Reparación finalizada",
+            mensaje=f"Se registró el servicio realizado para tu solicitud #{inc.id}.",
+            tipo="servicio_realizado",
+            incidente_id=inc.id,
+            db=db,
+            commit=False,
+        )
 
     # Liberar al técnico
     if asignacion.tecnico_id:

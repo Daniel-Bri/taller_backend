@@ -4,13 +4,20 @@ from collections import defaultdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, exists
 
-from app.emergencias.models import Incidente, IncidenteFoto
-from app.emergencias.service import public_foto_url
+from app.emergencias.models import Incidente, IncidenteFoto, IncidenteAudio, ClasificacionIA
+from app.emergencias.service import public_foto_url, public_audio_url
 from app.talleres_tecnicos.models import Asignacion
 from fastapi import HTTPException
 
 from app.acceso_registro.models import Taller
-from app.solicitudes.schemas import SolicitudDisponibleResponse
+from app.comunicacion import service as notif_service
+from app.solicitudes.schemas import (
+    SolicitudDisponibleResponse,
+    SolicitudDetalleResponse,
+    IncidenteDetalle,
+    AsignacionDetalle,
+    ClasificacionIAResumen,
+)
 
 RADIO_ATENCION_KM = 150.0
 
@@ -66,12 +73,22 @@ async def listar_solicitudes_disponibles(
     ids = [i.id for i in incidentes]
     fr = await db.execute(select(IncidenteFoto).where(IncidenteFoto.incidente_id.in_(ids)))
     fotos_rows = list(fr.scalars().all())
+    ar = await db.execute(select(IncidenteAudio).where(IncidenteAudio.incidente_id.in_(ids)))
+    audios_rows = list(ar.scalars().all())
     by_inc: dict[int, list[str]] = defaultdict(list)
     for f in fotos_rows:
         by_inc[f.incidente_id].append(public_foto_url(f.url_path))
+    by_audio_count: dict[int, int] = defaultdict(int)
+    for a in audios_rows:
+        by_audio_count[a.incidente_id] += 1
 
     out: list[SolicitudDisponibleResponse] = []
     for inc in incidentes:
+        dist_km = None
+        if taller.latitud is not None and taller.longitud is not None:
+            dist_km = round(
+                _haversine_km(taller.latitud, taller.longitud, inc.latitud, inc.longitud), 2
+            )
         out.append(
             SolicitudDisponibleResponse(
                 incidente_id=inc.id,
@@ -82,11 +99,75 @@ async def listar_solicitudes_disponibles(
                 prioridad=inc.prioridad or "media",
                 estado=inc.estado,
                 fotos_urls=by_inc.get(inc.id, []),
-                tiene_audio=False,
+                tiene_audio=by_audio_count.get(inc.id, 0) > 0,
+                distancia_km=dist_km,
                 created_at=inc.created_at,
             )
         )
     return out
+
+
+async def detalle_incidente_para_taller(
+    incidente_id: int, taller: Taller, db: AsyncSession
+) -> SolicitudDetalleResponse:
+    result = await db.execute(select(Incidente).where(Incidente.id == incidente_id))
+    inc = result.scalar_one_or_none()
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incidente no encontrado")
+
+    # Un taller puede consultar el detalle si es suyo (asignado) o si está disponible.
+    asig_row = await db.execute(
+        select(Asignacion).where(Asignacion.incidente_id == incidente_id).order_by(Asignacion.created_at.desc()).limit(1)
+    )
+    asig = asig_row.scalar_one_or_none()
+    if asig and asig.taller_id != taller.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este incidente")
+
+    f = await db.execute(select(IncidenteFoto).where(IncidenteFoto.incidente_id == incidente_id))
+    fotos = [public_foto_url(x.url_path) for x in list(f.scalars().all())]
+    a = await db.execute(select(IncidenteAudio).where(IncidenteAudio.incidente_id == incidente_id))
+    audios = [public_audio_url(x.url_path) for x in list(a.scalars().all())]
+    c = await db.execute(
+        select(ClasificacionIA)
+        .where(ClasificacionIA.incidente_id == incidente_id)
+        .order_by(ClasificacionIA.created_at.desc())
+        .limit(1)
+    )
+    cls = c.scalar_one_or_none()
+
+    asig_det: AsignacionDetalle | None = None
+    if asig:
+        asig_det = AsignacionDetalle(
+            id=asig.id,
+            estado=asig.estado,
+            eta=asig.eta,
+            observacion=asig.observacion,
+            taller_id=asig.taller_id,
+            taller_nombre=taller.nombre if asig.taller_id == taller.id else None,
+            tecnico_id=asig.tecnico_id,
+        )
+
+    return SolicitudDetalleResponse(
+        incidente=IncidenteDetalle(
+            id=inc.id,
+            usuario_id=inc.usuario_id,
+            vehiculo_id=inc.vehiculo_id,
+            latitud=inc.latitud,
+            longitud=inc.longitud,
+            descripcion=inc.descripcion,
+            estado=inc.estado,
+            prioridad=inc.prioridad,
+            created_at=inc.created_at,
+        ),
+        asignacion=asig_det,
+        clasificacion_ia=ClasificacionIAResumen(
+            categoria=cls.categoria,
+            confianza=cls.confianza,
+            resumen=cls.resumen,
+        ) if cls else None,
+        fotos_urls=fotos,
+        audios_urls=audios,
+    )
 
 
 async def aceptar_solicitud(
@@ -130,6 +211,15 @@ async def aceptar_solicitud(
     )
     db.add(asig)
     incidente.estado = "en_proceso"
+    await notif_service.crear_notificacion(
+        user_id=incidente.usuario_id,
+        titulo="Solicitud aceptada",
+        mensaje=f"Tu solicitud #{incidente.id} fue aceptada por un taller",
+        tipo="solicitud_aceptada",
+        incidente_id=incidente.id,
+        db=db,
+        commit=False,
+    )
     await db.commit()
     await db.refresh(asig)
     return asig

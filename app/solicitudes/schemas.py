@@ -28,4 +28,41 @@ class SolicitudDisponibleResponse(BaseModel):
     estado: str
     fotos_urls: list[str]
     tiene_audio: bool = False
+    distancia_km: Optional[float] = None
     created_at: datetime
+
+
+class ClasificacionIAResumen(BaseModel):
+    categoria: str
+    confianza: Optional[float] = None
+    resumen: Optional[str] = None
+
+
+class AsignacionDetalle(BaseModel):
+    id: int
+    estado: str
+    eta: Optional[int] = None
+    observacion: Optional[str] = None
+    taller_id: int
+    taller_nombre: Optional[str] = None
+    tecnico_id: Optional[int] = None
+
+
+class IncidenteDetalle(BaseModel):
+    id: int
+    usuario_id: int
+    vehiculo_id: int
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    descripcion: Optional[str] = None
+    estado: str
+    prioridad: str
+    created_at: datetime
+
+
+class SolicitudDetalleResponse(BaseModel):
+    incidente: IncidenteDetalle
+    asignacion: Optional[AsignacionDetalle] = None
+    clasificacion_ia: Optional[ClasificacionIAResumen] = None
+    fotos_urls: list[str] = []
+    audios_urls: list[str] = []
