@@ -40,6 +40,34 @@ async def me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
 
 
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    data: schemas.ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await service.cambiar_contrasena(current_user, data.current_password, data.new_password, db)
+    return {"msg": "Contraseña actualizada correctamente"}
+
+
+@router.post("/request-reset", status_code=status.HTTP_200_OK)
+async def request_reset(
+    data: schemas.RequestResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    await service.solicitar_reset_contrasena(data.email, db)
+    return {"msg": "Código enviado al correo registrado"}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    data: schemas.ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    await service.resetear_contrasena(data.email, data.code, data.new_password, db)
+    return {"msg": "Contraseña restablecida correctamente"}
+
+
 # ── CU03 - Registrar vehículo ──────────────────────────────
 @router.post("/vehiculos", response_model=VehiculoResponse, status_code=status.HTTP_201_CREATED)
 async def registrar_vehiculo(
@@ -68,15 +96,6 @@ async def eliminar_vehiculo(
     db: AsyncSession = Depends(get_db),
 ):
     await service.eliminar_vehiculo(vehiculo_id, current_user.id, db)
-
-
-# ── CU32 - Recordatorios de mantenimiento ─────────────────
-@router.get("/vehiculos/mantenimiento")
-async def recordatorios_mantenimiento(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.obtener_recordatorios_mantenimiento(current_user.id, db)
 
 
 # ── CU12 - Registrar taller ────────────────────────────────

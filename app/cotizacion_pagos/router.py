@@ -45,6 +45,16 @@ async def listar_cotizaciones(
     return [schemas.CotizacionResponse.model_validate(c) for c in cotizaciones]
 
 
+# ── CU20 · Mis cotizaciones (cliente) ─────────────────────
+@router.get("/mis-cotizaciones", response_model=list[schemas.CotizacionResponse])
+async def mis_cotizaciones(
+    current_user: User = Depends(require_role("cliente")),
+    db: AsyncSession = Depends(get_db),
+):
+    cotizaciones = await service.listar_mis_cotizaciones(current_user.id, db)
+    return [schemas.CotizacionResponse.model_validate(c) for c in cotizaciones]
+
+
 # ── CU20 · Ver cotización por ID ───────────────────────────
 @router.get("/cotizaciones/{cotizacion_id}", response_model=schemas.CotizacionResponse)
 async def ver_cotizacion(
@@ -68,13 +78,48 @@ async def actualizar_estado_cotizacion(
     return schemas.CotizacionResponse.model_validate(cotizacion)
 
 
-# ── CU26 stub · Realizar pago ──────────────────────────────
-@router.post("/pagos")
-async def realizar_pago():
-    return {"msg": "CU26 - realizar pago"}
+# ── CU20 · Realizar pago (cliente) ────────────────────────
+@router.post("/pagos", response_model=schemas.PagoResponse, status_code=status.HTTP_201_CREATED)
+async def realizar_pago(
+    data: schemas.PagoCreate,
+    current_user: User = Depends(require_role("cliente")),
+    db: AsyncSession = Depends(get_db),
+):
+    pago = await service.realizar_pago(current_user.id, data, db)
+    return schemas.PagoResponse.model_validate(pago)
 
 
-# ── Stub · Ver comisiones ──────────────────────────────────
-@router.get("/comisiones")
-async def ver_comisiones():
-    return {"msg": "CU32 - ver comisiones"}
+# ── CU26 · Ver comisiones del taller ──────────────────────
+@router.get("/comisiones", response_model=schemas.ComisionesResponse)
+async def ver_comisiones(
+    current_user: User = Depends(require_role("taller", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.role == "admin":
+        from sqlalchemy import select as sa_select
+        from app.cotizacion_pagos.models import Cotizacion, Pago
+        result = await db.execute(
+            sa_select(Cotizacion, Pago).join(Pago, Pago.cotizacion_id == Cotizacion.id)
+            .order_by(Pago.created_at.desc())
+        )
+        rows = result.all()
+        items = []
+        for cot, pago in rows:
+            comision = round(pago.monto * 0.10, 2)
+            items.append(schemas.ComisionItem(
+                pago_id=pago.id, cotizacion_id=cot.id, incidente_id=cot.incidente_id,
+                monto_bruto=round(pago.monto, 2), comision=comision,
+                monto_neto=round(pago.monto - comision, 2),
+                metodo=pago.metodo, fecha=pago.created_at,
+            ))
+        bruto = sum(i.monto_bruto for i in items)
+        return schemas.ComisionesResponse(
+            taller_id=0, total_servicios=len(items),
+            ingresos_brutos=round(bruto, 2), tasa_comision=0.10,
+            comision_plataforma=round(bruto * 0.10, 2),
+            ingresos_netos=round(bruto * 0.90, 2), pagos=items,
+        )
+
+    from app.talleres_tecnicos.service import get_taller_by_user
+    taller = await get_taller_by_user(current_user.id, db)
+    return await service.listar_comisiones(taller.id, db)

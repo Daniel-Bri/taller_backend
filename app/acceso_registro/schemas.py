@@ -60,6 +60,35 @@ class Token(BaseModel):
     user: UserResponse
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_seguro(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("La contraseña debe tener al menos 6 caracteres")
+        return v
+
+
+class RequestResetRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_seguro(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("La contraseña debe tener al menos 6 caracteres")
+        return v
+
+
 # ── Vehículo ───────────────────────────────────────────────
 class VehiculoCreate(BaseModel):
     placa: str

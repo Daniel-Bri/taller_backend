@@ -14,6 +14,15 @@ from app.reportes import schemas, service
 router = APIRouter()
 
 
+# ── CU32 - Recordatorios de mantenimiento ─────────────────
+@router.get("/mantenimiento")
+async def recordatorios_mantenimiento(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.obtener_recordatorios_mantenimiento(current_user.id, db)
+
+
 # ── CU28 - Calificar servicio ──────────────────────────────
 @router.post("/{solicitud_id}/calificacion")
 async def calificar_servicio(solicitud_id: int):
@@ -22,8 +31,76 @@ async def calificar_servicio(solicitud_id: int):
 
 # ── CU29 - Ver historial de servicios ─────────────────────
 @router.get("/historial")
-async def historial():
-    return {"msg": "CU29 - historial de servicios"}
+async def historial(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.talleres_tecnicos.models import ServicioRealizado, Asignacion
+    from app.cotizacion_pagos.models import Cotizacion
+    from app.emergencias.models import Incidente
+    from sqlalchemy.orm import undefer as _undefer
+
+    if current_user.role in ("taller", "tecnico"):
+        from app.talleres_tecnicos.service import listar_servicios_realizados
+        servicios = await listar_servicios_realizados(current_user.id, current_user.role, db)
+    elif current_user.role == "cliente":
+        res = await db.execute(
+            select(ServicioRealizado)
+            .join(Asignacion, ServicioRealizado.asignacion_id == Asignacion.id)
+            .join(Incidente, Asignacion.incidente_id == Incidente.id)
+            .where(Incidente.usuario_id == current_user.id)
+            .order_by(ServicioRealizado.fecha_cierre.desc())
+        )
+        servicios = list(res.scalars().all())
+    else:
+        servicios = []
+
+    if not servicios:
+        return []
+
+    asig_ids = [s.asignacion_id for s in servicios]
+
+    # Mapear asignacion → incidente
+    asig_res = await db.execute(
+        select(Asignacion.id, Asignacion.incidente_id).where(Asignacion.id.in_(asig_ids))
+    )
+    asig_to_inc: dict[int, int] = {row[0]: row[1] for row in asig_res.all()}
+    inc_ids = list(set(asig_to_inc.values()))
+
+    # Info de incidentes (batch)
+    inc_res = await db.execute(
+        select(Incidente.id, Incidente.descripcion, Incidente.tipo_incidente)
+        .options(_undefer(Incidente.tipo_incidente))
+        .where(Incidente.id.in_(inc_ids))
+    )
+    inc_data: dict[int, dict] = {
+        row[0]: {"incidente_id": row[0], "descripcion": row[1], "tipo_incidente": row[2]}
+        for row in inc_res.all()
+    }
+
+    # Cotizaciones aceptadas/pagadas (batch)
+    cot_res = await db.execute(
+        select(Cotizacion.incidente_id, Cotizacion.monto_estimado, Cotizacion.estado)
+        .where(
+            Cotizacion.incidente_id.in_(inc_ids),
+            Cotizacion.estado.in_(["aceptada", "pagada"]),
+        )
+    )
+    cot_data: dict[int, float] = {row[0]: row[1] for row in cot_res.all()}
+
+    return [
+        {
+            "id":                  s.id,
+            "asignacion_id":       s.asignacion_id,
+            "descripcion_trabajo": s.descripcion_trabajo,
+            "repuestos":           s.repuestos,
+            "observaciones":       s.observaciones,
+            "fecha_cierre":        s.fecha_cierre.isoformat() if s.fecha_cierre else None,
+            "monto_cotizacion":    cot_data.get(asig_to_inc.get(s.asignacion_id)),
+            **(inc_data.get(asig_to_inc.get(s.asignacion_id, 0), {})),
+        }
+        for s in servicios
+    ]
 
 
 # ── Métricas del taller ───────────────────────────────────

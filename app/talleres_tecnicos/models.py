@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import deferred
 from sqlalchemy.sql import func
 from app.db.base import Base
 
@@ -15,10 +16,11 @@ class Tecnico(Base):
     estado        = Column(String(20), default="disponible")   # disponible | ocupado | inactivo
     activo        = Column(Boolean, default=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
-    # CU17 — ubicación en tiempo real (nullable hasta que el técnico comparta)
-    latitud              = Column(Float, nullable=True)
-    longitud             = Column(Float, nullable=True)
-    ultima_actualizacion = Column(DateTime(timezone=True), nullable=True)
+    # CU17 — ubicación en tiempo real; carga diferida para no romper SELECT si la BD
+    # fue creada antes de que estas columnas se agregaran al modelo.
+    latitud              = deferred(Column(Float, nullable=True))
+    longitud             = deferred(Column(Float, nullable=True))
+    ultima_actualizacion = deferred(Column(DateTime(timezone=True), nullable=True))
 
 
 class Asignacion(Base):

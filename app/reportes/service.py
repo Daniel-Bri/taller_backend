@@ -1,6 +1,6 @@
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +71,124 @@ async def listar_eventos(
 async def obtener_evento(evento_id: int, db: AsyncSession) -> Optional[BitacoraEvento]:
     result = await db.execute(select(BitacoraEvento).where(BitacoraEvento.id == evento_id))
     return result.scalar_one_or_none()
+
+
+# ── CU32 - Recordatorios de mantenimiento ─────────────────
+async def obtener_recordatorios_mantenimiento(
+    usuario_id: int, db: AsyncSession
+) -> list[dict]:
+    from app.acceso_registro.models import Vehiculo
+    from app.talleres_tecnicos.models import ServicioRealizado, Asignacion
+    from app.emergencias.models import Incidente
+
+    vehiculos_result = await db.execute(
+        select(Vehiculo).where(Vehiculo.usuario_id == usuario_id, Vehiculo.activo.is_(True))
+    )
+    vehiculos = list(vehiculos_result.scalars().all())
+
+    recordatorios = []
+    UMBRAL_GLOBAL = 90  # fallback cuando no hay historial suficiente
+
+    CATEGORIAS: dict[str, list[str]] = {
+        "batería":    ["batería", "bateria", "battery", "arranque", "carga eléctrica"],
+        "frenos":     ["freno", "frenos", "pastilla", "disco", "frena"],
+        "aceite":     ["aceite", "lubricante", "cambio de aceite"],
+        "llantas":    ["llanta", "neumático", "neumatico", "goma", "ponchadura", "pinchazo"],
+        "motor":      ["motor", "radiador", "sobrecalentamiento", "culata"],
+        "suspensión": ["suspensión", "suspension", "amortiguador", "dirección", "direccion"],
+        "eléctrico":  ["eléctrico", "electrico", "alternador", "fusible", "corto"],
+    }
+
+    for v in vehiculos:
+        query = (
+            select(ServicioRealizado)
+            .join(Asignacion, ServicioRealizado.asignacion_id == Asignacion.id)
+            .join(Incidente, Asignacion.incidente_id == Incidente.id)
+            .where(Incidente.vehiculo_id == v.id)
+            .order_by(ServicioRealizado.fecha_cierre.asc())
+        )
+        srv_result = await db.execute(query)
+        servicios = list(srv_result.scalars().all())
+
+        if not servicios:
+            recordatorios.append({
+                "vehiculo_id": v.id,
+                "placa": v.placa,
+                "marca": v.marca,
+                "modelo": v.modelo,
+                "anio": v.anio,
+                "dias_desde_ultimo_servicio": None,
+                "ultimo_servicio": None,
+                "intervalo_recomendado": None,
+                "problemas_recurrentes": [],
+                "mensaje": f"El vehículo {v.marca} {v.modelo} ({v.placa}) no tiene historial de servicios en la plataforma.",
+                "urgencia": "sin_historial",
+            })
+            continue
+
+        fechas = []
+        for s in servicios:
+            f = s.fecha_cierre
+            if f.tzinfo is None:
+                f = f.replace(tzinfo=timezone.utc)
+            fechas.append(f)
+
+        intervalo_recomendado: int | None = None
+        if len(fechas) >= 2:
+            intervalos = [(fechas[i] - fechas[i - 1]).days for i in range(1, len(fechas))]
+            promedio = sum(intervalos) / len(intervalos)
+            intervalo_recomendado = max(30, int(promedio))
+
+        umbral = intervalo_recomendado if intervalo_recomendado else UMBRAL_GLOBAL
+
+        conteo: dict[str, int] = {}
+        for s in servicios:
+            texto = ((s.descripcion_trabajo or "") + " " + (s.observaciones or "")).lower()
+            for categoria, palabras in CATEGORIAS.items():
+                if any(p in texto for p in palabras):
+                    conteo[categoria] = conteo.get(categoria, 0) + 1
+        recurrentes = [cat for cat, cnt in conteo.items() if cnt >= 2]
+
+        ahora = datetime.now(timezone.utc)
+        dias = (ahora - fechas[-1]).days
+
+        if dias >= int(umbral * 1.5):
+            urgencia = "alta"
+        elif dias >= umbral:
+            urgencia = "media"
+        elif dias >= int(umbral * 0.75):
+            urgencia = "baja"
+        else:
+            continue
+
+        if intervalo_recomendado:
+            base = (
+                f"Han pasado {dias} días desde el último servicio de {v.marca} {v.modelo} ({v.placa}). "
+                f"Basado en tu historial, este vehículo se revisa cada ~{intervalo_recomendado} días."
+            )
+        else:
+            base = (
+                f"Han pasado {dias} días desde el último servicio de {v.marca} {v.modelo} ({v.placa}). "
+                f"Se recomienda mantenimiento preventivo cada {UMBRAL_GLOBAL} días."
+            )
+        if recurrentes:
+            base += f" Problemas frecuentes detectados: {', '.join(recurrentes)}."
+
+        recordatorios.append({
+            "vehiculo_id": v.id,
+            "placa": v.placa,
+            "marca": v.marca,
+            "modelo": v.modelo,
+            "anio": v.anio,
+            "dias_desde_ultimo_servicio": dias,
+            "ultimo_servicio": fechas[-1].isoformat(),
+            "intervalo_recomendado": intervalo_recomendado,
+            "problemas_recurrentes": recurrentes,
+            "mensaje": base,
+            "urgencia": urgencia,
+        })
+
+    return recordatorios
 
 
 async def exportar_csv(

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -81,8 +82,24 @@ async def listar_asignaciones_activas(
     current_user: User = Depends(require_role("taller", "tecnico")),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.emergencias.models import Incidente
     asignaciones = await service.listar_asignaciones_activas(current_user.id, current_user.role, db)
-    return [schemas.AsignacionResponse.model_validate(a) for a in asignaciones]
+    if not asignaciones:
+        return []
+
+    # Batch-fetch descripciones para detectar incidentes SOS
+    inc_ids = [a.incidente_id for a in asignaciones]
+    inc_rows = await db.execute(
+        select(Incidente.id, Incidente.descripcion).where(Incidente.id.in_(inc_ids))
+    )
+    inc_desc = {row.id: (row.descripcion or "") for row in inc_rows.all()}
+
+    responses = []
+    for a in asignaciones:
+        r = schemas.AsignacionResponse.model_validate(a)
+        r.es_sos = "SOS" in inc_desc.get(a.incidente_id, "")
+        responses.append(r)
+    return responses
 
 
 # ── CU15 · Actualizar estado del servicio ─────────────────

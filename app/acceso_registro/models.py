@@ -1,6 +1,7 @@
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Float, ForeignKey
 from sqlalchemy.sql import func
 from app.db.base import Base
+from datetime import datetime, timezone
 
 
 class User(Base):
@@ -45,4 +46,15 @@ class Taller(Base):
     disponible = Column(Boolean, default=False)
     estado = Column(String(20), default="pendiente")  # pendiente | aprobado | rechazado
     rating = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), index=True, nullable=False)
+    code = Column(String(6), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

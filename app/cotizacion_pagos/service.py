@@ -3,25 +3,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException
 
-from app.cotizacion_pagos.models import Cotizacion
+from app.cotizacion_pagos.models import Cotizacion, Pago
 from app.talleres_tecnicos.models import Asignacion
 from app.acceso_registro.models import Taller
-from app.cotizacion_pagos.schemas import CotizacionCreate, IncidenteDisponibleResponse
+from app.cotizacion_pagos.schemas import (
+    CotizacionCreate, IncidenteDisponibleResponse,
+    PagoCreate, ComisionItem, ComisionesResponse,
+)
 
-
-async def _get_taller(user_id: int, db: AsyncSession) -> Taller:
-    result = await db.execute(
-        select(Taller).where(Taller.usuario_id == user_id, Taller.estado == "aprobado")
-    )
-    taller = result.scalar_one_or_none()
-    if not taller:
-        raise HTTPException(status_code=403, detail="No tienes un taller aprobado")
-    return taller
+_TASA_COMISION = 0.10  # 10 % plataforma
 
 
 # ── CU20 · Incidentes disponibles para cotizar ─────────────
 async def listar_incidentes_disponibles(taller_id: int, db: AsyncSession) -> list[IncidenteDisponibleResponse]:
-    # Asignaciones aceptadas del taller
     result = await db.execute(
         select(Asignacion).where(
             Asignacion.taller_id == taller_id,
@@ -30,7 +24,6 @@ async def listar_incidentes_disponibles(taller_id: int, db: AsyncSession) -> lis
     )
     asignaciones = list(result.scalars().all())
 
-    # Incidentes que ya tienen cotización de este taller
     result = await db.execute(
         select(Cotizacion.incidente_id).where(Cotizacion.taller_id == taller_id)
     )
@@ -50,7 +43,6 @@ async def listar_incidentes_disponibles(taller_id: int, db: AsyncSession) -> lis
 
 # ── CU20 · Generar cotización ──────────────────────────────
 async def generar_cotizacion(taller_id: int, data: CotizacionCreate, db: AsyncSession) -> Cotizacion:
-    # Verificar que la asignación le pertenece al taller
     result = await db.execute(
         select(Asignacion).where(
             Asignacion.incidente_id == data.incidente_id,
@@ -60,7 +52,6 @@ async def generar_cotizacion(taller_id: int, data: CotizacionCreate, db: AsyncSe
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Este incidente no está asignado a tu taller")
 
-    # Verificar que no existe ya una cotización
     result = await db.execute(
         select(Cotizacion).where(
             Cotizacion.incidente_id == data.incidente_id,
@@ -70,7 +61,7 @@ async def generar_cotizacion(taller_id: int, data: CotizacionCreate, db: AsyncSe
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Ya existe una cotización para este incidente")
 
-    monto_total = sum(item.cantidad * item.precio_unitario for item in data.items)
+    monto_total  = sum(item.cantidad * item.precio_unitario for item in data.items)
     detalle_json = json.dumps([item.model_dump() for item in data.items], ensure_ascii=False)
 
     cotizacion = Cotizacion(
@@ -95,6 +86,18 @@ async def listar_cotizaciones(taller_id: int, db: AsyncSession) -> list[Cotizaci
     return list(result.scalars().all())
 
 
+# ── CU20 · Mis cotizaciones (cliente) ─────────────────────
+async def listar_mis_cotizaciones(usuario_id: int, db: AsyncSession) -> list[Cotizacion]:
+    from app.emergencias.models import Incidente
+    result = await db.execute(
+        select(Cotizacion)
+        .join(Incidente, Cotizacion.incidente_id == Incidente.id)
+        .where(Incidente.usuario_id == usuario_id)
+        .order_by(Cotizacion.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 # ── CU20 · Ver cotización por ID ───────────────────────────
 async def get_cotizacion(cotizacion_id: int, db: AsyncSession) -> Cotizacion:
     result = await db.execute(select(Cotizacion).where(Cotizacion.id == cotizacion_id))
@@ -113,3 +116,73 @@ async def actualizar_estado(cotizacion_id: int, nuevo_estado: str, db: AsyncSess
     await db.commit()
     await db.refresh(cotizacion)
     return cotizacion
+
+
+# ── CU20 · Realizar pago (cliente) ────────────────────────
+async def realizar_pago(usuario_id: int, data: PagoCreate, db: AsyncSession) -> Pago:
+    cotizacion = await get_cotizacion(data.cotizacion_id, db)
+
+    from app.emergencias.models import Incidente
+    result = await db.execute(
+        select(Incidente).where(
+            Incidente.id == cotizacion.incidente_id,
+            Incidente.usuario_id == usuario_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="No tienes permiso para pagar esta cotización")
+
+    if cotizacion.estado != "aceptada":
+        raise HTTPException(status_code=400, detail="Solo se puede pagar una cotización aceptada")
+
+    existing = await db.execute(select(Pago).where(Pago.cotizacion_id == data.cotizacion_id))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Esta cotización ya fue pagada")
+
+    pago = Pago(
+        cotizacion_id=data.cotizacion_id,
+        monto=cotizacion.monto_estimado,
+        metodo=data.metodo,
+        estado="completado",
+    )
+    db.add(pago)
+    cotizacion.estado = "pagada"
+    await db.commit()
+    await db.refresh(pago)
+    return pago
+
+
+# ── CU26 · Comisiones del taller ──────────────────────────
+async def listar_comisiones(taller_id: int, db: AsyncSession) -> ComisionesResponse:
+    result = await db.execute(
+        select(Cotizacion, Pago)
+        .join(Pago, Pago.cotizacion_id == Cotizacion.id)
+        .where(Cotizacion.taller_id == taller_id)
+        .order_by(Pago.created_at.desc())
+    )
+    rows = result.all()
+
+    items: list[ComisionItem] = []
+    for cotizacion, pago in rows:
+        comision = round(pago.monto * _TASA_COMISION, 2)
+        items.append(ComisionItem(
+            pago_id=pago.id,
+            cotizacion_id=cotizacion.id,
+            incidente_id=cotizacion.incidente_id,
+            monto_bruto=round(pago.monto, 2),
+            comision=comision,
+            monto_neto=round(pago.monto - comision, 2),
+            metodo=pago.metodo,
+            fecha=pago.created_at,
+        ))
+
+    bruto = sum(i.monto_bruto for i in items)
+    return ComisionesResponse(
+        taller_id=taller_id,
+        total_servicios=len(items),
+        ingresos_brutos=round(bruto, 2),
+        tasa_comision=_TASA_COMISION,
+        comision_plataforma=round(bruto * _TASA_COMISION, 2),
+        ingresos_netos=round(bruto * (1 - _TASA_COMISION), 2),
+        pagos=items,
+    )

@@ -65,3 +65,51 @@ class CotizacionResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Pago ───────────────────────────────────────────────────
+
+class PagoCreate(BaseModel):
+    cotizacion_id: int
+    metodo: str
+
+    @field_validator("metodo")
+    @classmethod
+    def metodo_valido(cls, v: str) -> str:
+        if v not in ("efectivo", "transferencia", "tarjeta"):
+            raise ValueError("Método debe ser 'efectivo', 'transferencia' o 'tarjeta'")
+        return v
+
+
+class PagoResponse(BaseModel):
+    id: int
+    cotizacion_id: int
+    monto: float
+    metodo: str
+    estado: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Comisiones ─────────────────────────────────────────────
+
+class ComisionItem(BaseModel):
+    pago_id: int
+    cotizacion_id: int
+    incidente_id: int
+    monto_bruto: float
+    comision: float
+    monto_neto: float
+    metodo: str
+    fecha: datetime
+
+
+class ComisionesResponse(BaseModel):
+    taller_id: int
+    total_servicios: int
+    ingresos_brutos: float
+    tasa_comision: float
+    comision_plataforma: float
+    ingresos_netos: float
+    pagos: list[ComisionItem]

@@ -1,11 +1,12 @@
-from datetime import datetime, timezone
+import random
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from fastapi import HTTPException, status
 
-from app.acceso_registro.models import User, Vehiculo, Taller
+from app.acceso_registro.models import User, Vehiculo, Taller, PasswordResetCode
 from app.acceso_registro.schemas import UserCreate, UserLogin, VehiculoCreate, TallerCreate, UserUpdate
 from app.core.security import hash_password, verify_password, create_access_token
 
@@ -31,7 +32,7 @@ async def registrar_usuario(data: UserCreate, db: AsyncSession) -> tuple[str, Us
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token({"sub": str(user.id), "email": user.email, "role": user.role})
     return token, user
 
 
@@ -45,8 +46,66 @@ async def iniciar_sesion(data: UserLogin, db: AsyncSession) -> tuple[str, User]:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Cuenta desactivada")
 
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token({"sub": str(user.id), "email": user.email, "role": user.role})
     return token, user
+
+
+async def cambiar_contrasena(user: User, current_password: str, new_password: str, db: AsyncSession) -> None:
+    if not verify_password(current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Contraseña actual incorrecta")
+    user.hashed_password = hash_password(new_password)
+    await db.commit()
+
+
+async def solicitar_reset_contrasena(email: str, db: AsyncSession) -> None:
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="No existe una cuenta con ese correo")
+
+    # Invalidar códigos anteriores no usados
+    old = await db.execute(
+        select(PasswordResetCode).where(
+            PasswordResetCode.email == email.lower(),
+            PasswordResetCode.used.is_(False),
+        )
+    )
+    for c in old.scalars():
+        c.used = True
+
+    code = "".join(str(random.randint(0, 9)) for _ in range(6))
+    reset = PasswordResetCode(
+        email=email.lower(),
+        code=code,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+    )
+    db.add(reset)
+    await db.commit()
+
+    from app.core.email_service import send_reset_code
+    await send_reset_code(email, code, user.full_name or user.username)
+
+
+async def resetear_contrasena(email: str, code: str, new_password: str, db: AsyncSession) -> None:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(PasswordResetCode).where(
+            PasswordResetCode.email == email.lower(),
+            PasswordResetCode.code == code,
+            PasswordResetCode.used.is_(False),
+            PasswordResetCode.expires_at > now,
+        )
+    )
+    reset = result.scalar_one_or_none()
+    if not reset:
+        raise HTTPException(status_code=400, detail="Código inválido o expirado")
+
+    reset.used = True
+
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    user = result.scalar_one_or_none()
+    user.hashed_password = hash_password(new_password)
+    await db.commit()
 
 
 # ── CU03 / CU04 - Vehículos ────────────────────────────────
@@ -200,64 +259,3 @@ async def toggle_usuario_activo(
     return user
 
 
-# ── CU32 - Recordatorios de mantenimiento ─────────────────
-async def obtener_recordatorios_mantenimiento(
-    usuario_id: int, db: AsyncSession
-) -> list[dict]:
-    from app.talleres_tecnicos.models import ServicioRealizado, Asignacion
-    from app.emergencias.models import Incidente
-
-    vehiculos_result = await db.execute(
-        select(Vehiculo).where(Vehiculo.usuario_id == usuario_id, Vehiculo.activo == True)
-    )
-    vehiculos = list(vehiculos_result.scalars().all())
-
-    recordatorios = []
-    umbral_dias = 90
-
-    for v in vehiculos:
-        # Busca el servicio más reciente para este vehículo
-        query = (
-            select(ServicioRealizado)
-            .join(Asignacion, ServicioRealizado.asignacion_id == Asignacion.id)
-            .join(Incidente, Asignacion.incidente_id == Incidente.id)
-            .where(Incidente.vehiculo_id == v.id)
-            .order_by(ServicioRealizado.fecha_cierre.desc())
-        )
-        srv_result = await db.execute(query)
-        ultimo_srv = srv_result.scalars().first()
-
-        if ultimo_srv is None:
-            recordatorios.append({
-                "vehiculo_id": v.id,
-                "placa": v.placa,
-                "marca": v.marca,
-                "modelo": v.modelo,
-                "anio": v.anio,
-                "dias_desde_ultimo_servicio": None,
-                "ultimo_servicio": None,
-                "mensaje": f"El vehículo {v.marca} {v.modelo} ({v.placa}) no tiene historial de servicios en la plataforma.",
-                "urgencia": "sin_historial",
-            })
-        else:
-            ahora = datetime.now(timezone.utc)
-            fecha_srv = ultimo_srv.fecha_cierre
-            if fecha_srv.tzinfo is None:
-                fecha_srv = fecha_srv.replace(tzinfo=timezone.utc)
-            dias = (ahora - fecha_srv).days
-
-            if dias >= umbral_dias:
-                urgencia = "alta" if dias >= 180 else "media"
-                recordatorios.append({
-                    "vehiculo_id": v.id,
-                    "placa": v.placa,
-                    "marca": v.marca,
-                    "modelo": v.modelo,
-                    "anio": v.anio,
-                    "dias_desde_ultimo_servicio": dias,
-                    "ultimo_servicio": fecha_srv.isoformat(),
-                    "mensaje": f"Han pasado {dias} días desde el último servicio de {v.marca} {v.modelo} ({v.placa}). Se recomienda un mantenimiento preventivo.",
-                    "urgencia": urgencia,
-                })
-
-    return recordatorios

@@ -1,11 +1,15 @@
 from pydantic import BaseModel, field_validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 
 class UbicacionUpdate(BaseModel):
     latitud: float
     longitud: float
+
+
+class DescripcionUpdate(BaseModel):
+    descripcion: str
 
 
 class IncidenteCreate(BaseModel):
@@ -30,6 +34,19 @@ class IncidenteResponse(BaseModel):
     descripcion: Optional[str]
     estado: str
     prioridad: str
+    tipo_incidente: Optional[str] = None   # §4.5 – clasificación IA
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvidenciaResponse(BaseModel):
+    id: int
+    incidente_id: int
+    tipo: str
+    url: Optional[str]
+    analisis_ia: Optional[Any] = None
+    transcripcion: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

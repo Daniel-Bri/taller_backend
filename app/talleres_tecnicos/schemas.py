@@ -52,6 +52,7 @@ class AsignacionResponse(BaseModel):
     eta: Optional[int]
     observacion: Optional[str]
     created_at: datetime
+    es_sos: bool = False  # Poblado solo en /asignaciones/activas
 
     model_config = {"from_attributes": True}
 
@@ -61,6 +62,9 @@ class AsignarTecnicoPayload(BaseModel):
 
 
 # ── CU15 · Estado del servicio ─────────────────────────────
+# Transiciones que puede hacer el taller/técnico desde CU15.
+# en_sitio es preferiblemente confirmado por el cliente (CU31), pero el taller
+# puede hacerlo como fallback para casos SOS o cuando el cliente no tiene señal.
 TRANSICIONES_VALIDAS: dict[str, set[str]] = {
     "aceptado":      {"en_camino", "cancelado"},
     "en_camino":     {"en_sitio",  "cancelado"},

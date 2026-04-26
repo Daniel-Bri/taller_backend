@@ -25,9 +25,31 @@ async def get_taller_by_user(user_id: int, db: AsyncSession) -> Taller:
 # ── Técnicos ───────────────────────────────────────────────
 async def listar_tecnicos(taller_id: int, db: AsyncSession) -> list[Tecnico]:
     result = await db.execute(
-        select(Tecnico).where(Tecnico.taller_id == taller_id, Tecnico.activo == True)
+        select(Tecnico).where(Tecnico.taller_id == taller_id, Tecnico.activo.is_(True))
     )
-    return list(result.scalars().all())
+    tecnicos = list(result.scalars().all())
+
+    # Auto-corregir técnicos "ocupado" sin asignación activa real
+    ocupados = [t for t in tecnicos if t.estado == "ocupado"]
+    if ocupados:
+        res = await db.execute(
+            select(Asignacion.tecnico_id)
+            .where(
+                Asignacion.tecnico_id.in_([t.id for t in ocupados]),
+                Asignacion.estado.notin_(["cancelado", "finalizado"]),
+            )
+            .distinct()
+        )
+        con_asignacion = {row[0] for row in res.all()}
+        corregido = False
+        for t in ocupados:
+            if t.id not in con_asignacion:
+                t.estado = "disponible"
+                corregido = True
+        if corregido:
+            await db.commit()
+
+    return tecnicos
 
 
 async def registrar_tecnico(taller_id: int, data: TecnicoCreate, db: AsyncSession) -> Tecnico:
@@ -47,7 +69,7 @@ async def actualizar_tecnico(
     tecnico_id: int, taller_id: int, data: TecnicoUpdate, db: AsyncSession
 ) -> Tecnico:
     result = await db.execute(
-        select(Tecnico).where(Tecnico.id == tecnico_id, Tecnico.taller_id == taller_id, Tecnico.activo == True)
+        select(Tecnico).where(Tecnico.id == tecnico_id, Tecnico.taller_id == taller_id, Tecnico.activo.is_(True))
     )
     tecnico = result.scalar_one_or_none()
     if not tecnico:
@@ -94,7 +116,7 @@ async def get_taller_info(user_id: int, db: AsyncSession) -> TallerInfoResponse:
         raise HTTPException(status_code=404, detail="No tienes un taller registrado")
 
     result = await db.execute(
-        select(Tecnico).where(Tecnico.taller_id == taller.id, Tecnico.activo == True)
+        select(Tecnico).where(Tecnico.taller_id == taller.id, Tecnico.activo.is_(True))
     )
     tecnicos = list(result.scalars().all())
 
@@ -141,7 +163,7 @@ async def listar_asignaciones_activas(user_id: int, role: str, db: AsyncSession)
         )
     else:  # tecnico
         result_t = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = result_t.scalar_one_or_none()
         if not tecnico:
@@ -168,7 +190,7 @@ async def actualizar_estado_asignacion(
             raise HTTPException(status_code=403, detail="No tienes permiso sobre esta asignación")
     else:  # tecnico
         result_t = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = result_t.scalar_one_or_none()
         if not tecnico or asignacion.tecnico_id != tecnico.id:
@@ -185,6 +207,16 @@ async def actualizar_estado_asignacion(
     asignacion.estado = data.estado
     if data.observacion:
         asignacion.observacion = data.observacion
+
+    # Liberar técnico al finalizar o cancelar
+    if data.estado in ("finalizado", "cancelado") and asignacion.tecnico_id:
+        res_tec = await db.execute(
+            select(Tecnico).where(Tecnico.id == asignacion.tecnico_id)
+        )
+        tec = res_tec.scalar_one_or_none()
+        if tec and tec.estado == "ocupado":
+            tec.estado = "disponible"
+
     await db.commit()
     await db.refresh(asignacion)
     return asignacion
@@ -202,7 +234,7 @@ async def listar_asignaciones_listas(user_id: int, role: str, db: AsyncSession) 
         )
     else:  # tecnico
         result_t = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = result_t.scalar_one_or_none()
         if not tecnico:
@@ -230,7 +262,7 @@ async def registrar_servicio_y_cerrar(
             raise HTTPException(status_code=403, detail="No tienes permiso sobre esta asignación")
     else:
         result_t = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = result_t.scalar_one_or_none()
         if not tecnico or asignacion.tecnico_id != tecnico.id:
@@ -280,7 +312,7 @@ async def listar_servicios_realizados(user_id: int, role: str, db: AsyncSession)
         sub = select(Asignacion.id).where(Asignacion.taller_id == taller.id)
     else:
         result_t = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = result_t.scalar_one_or_none()
         if not tecnico:
@@ -344,7 +376,7 @@ async def asignar_tecnico_a_solicitud(
         select(Tecnico).where(
             Tecnico.id == tecnico_id,
             Tecnico.taller_id == taller_id,
-            Tecnico.activo == True,
+            Tecnico.activo.is_(True),
             Tecnico.estado == "disponible",
         )
     )

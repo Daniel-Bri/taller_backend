@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.acceso_registro.models import Taller, User
@@ -20,7 +21,7 @@ async def actualizar_ubicacion_tecnico(
     user_id: int, data: UbicacionTecnicoUpdate, db: AsyncSession
 ) -> dict:
     result = await db.execute(
-        select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+        select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
     )
     tecnico = result.scalar_one_or_none()
     if not tecnico:
@@ -56,7 +57,13 @@ async def obtener_ubicacion_tecnico(
         raise HTTPException(status_code=404, detail="Aún no hay técnico asignado")
 
     res_tec = await db.execute(
-        select(Tecnico).where(Tecnico.id == asignacion.tecnico_id)
+        select(Tecnico)
+        .options(
+            undefer(Tecnico.latitud),
+            undefer(Tecnico.longitud),
+            undefer(Tecnico.ultima_actualizacion),
+        )
+        .where(Tecnico.id == asignacion.tecnico_id)
     )
     tecnico = res_tec.scalar_one_or_none()
     if not tecnico:
@@ -94,7 +101,7 @@ async def _verificar_acceso_chat(
             raise HTTPException(status_code=403, detail="No tienes acceso a esta conversación")
     elif role == "tecnico":
         res = await db.execute(
-            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo == True)
+            select(Tecnico).where(Tecnico.usuario_id == user_id, Tecnico.activo.is_(True))
         )
         tecnico = res.scalar_one_or_none()
         if not tecnico or asignacion.tecnico_id != tecnico.id:
