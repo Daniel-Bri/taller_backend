@@ -20,6 +20,9 @@ from app.db.base import Base
 from app.core.security import hash_password
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:
+    print("[seed] DATABASE_URL no configurada — omitiendo seed.")
+    raise SystemExit(0)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
@@ -439,4 +442,7 @@ async def seed():
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except Exception as exc:
+        print(f"[seed] Error al ejecutar seed (continuando): {exc}")
