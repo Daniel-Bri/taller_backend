@@ -21,6 +21,16 @@ _UPLOAD_DIR = "uploads"
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+async def _refetch(incidente_id: int, db: AsyncSession) -> "Incidente":
+    """Re-fetch with tipo_incidente undeferred to avoid MissingGreenlet on lazy load."""
+    result = await db.execute(
+        select(Incidente)
+        .options(undefer(Incidente.tipo_incidente))
+        .where(Incidente.id == incidente_id)
+    )
+    return result.scalar_one()
+
+
 async def _get_incidente_usuario(
     incidente_id: int, usuario_id: int, db: AsyncSession
 ) -> Incidente:
@@ -65,8 +75,8 @@ async def crear_incidente(
     )
     db.add(incidente)
     await db.commit()
-    await db.refresh(incidente)
-    return incidente
+    await db.flush()
+    return await _refetch(incidente.id, db)
 
 
 # ── CU30 ─────────────────────────────────────────────────────────────────────
@@ -100,8 +110,8 @@ async def crear_incidente_sos(
     )
     db.add(incidente)
     await db.commit()
-    await db.refresh(incidente)
-    return incidente
+    await db.flush()
+    return await _refetch(incidente.id, db)
 
 
 # ── CU06 ─────────────────────────────────────────────────────────────────────
@@ -113,8 +123,7 @@ async def actualizar_ubicacion(
     incidente.latitud  = data.latitud
     incidente.longitud = data.longitud
     await db.commit()
-    await db.refresh(incidente)
-    return incidente
+    return await _refetch(incidente.id, db)
 
 
 # ── CU09 ─────────────────────────────────────────────────────────────────────
@@ -129,8 +138,7 @@ async def actualizar_descripcion(
         res_ia = clasificador.clasificar(descripcion)
         incidente.tipo_incidente = res_ia["tipo"]
     await db.commit()
-    await db.refresh(incidente)
-    return incidente
+    return await _refetch(incidente.id, db)
 
 
 # ── CU07 ─────────────────────────────────────────────────────────────────────
