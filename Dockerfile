@@ -9,4 +9,6 @@ COPY . .
 
 RUN mkdir -p uploads/fotos uploads/audio
 
-CMD ["sh", "-c", "python seed.py; uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
+EXPOSE 8080
+
+CMD ["sh", "-c", "python seed.py; uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
