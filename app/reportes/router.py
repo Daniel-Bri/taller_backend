@@ -1,10 +1,10 @@
 import math
 from datetime import datetime
-import select
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -25,9 +25,35 @@ async def recordatorios_mantenimiento(
 
 
 # ── CU28 - Calificar servicio ──────────────────────────────
-@router.post("/{solicitud_id}/calificacion")
-async def calificar_servicio(solicitud_id: int):
-    return {"msg": f"CU28 - calificar servicio {solicitud_id}"}
+@router.get(
+    "/calificaciones/pendientes",
+    response_model=list[schemas.CalificacionPendienteItem],
+)
+async def calificaciones_pendientes(
+    current_user: User = Depends(require_role("cliente")),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await service.listar_calificaciones_pendientes(current_user.id, db)
+    return [schemas.CalificacionPendienteItem(**r) for r in rows]
+
+
+@router.post(
+    "/calificaciones",
+    response_model=schemas.CalificacionResponse,
+)
+async def calificar_servicio(
+    data: schemas.CalificacionCreate,
+    current_user: User = Depends(require_role("cliente")),
+    db: AsyncSession = Depends(get_db),
+):
+    cal = await service.crear_calificacion(
+        cliente_id=current_user.id,
+        asignacion_id=data.asignacion_id,
+        puntuacion=data.puntuacion,
+        resena=data.resena,
+        db=db,
+    )
+    return schemas.CalificacionResponse.model_validate(cal)
 
 
 # ── CU29 - Ver historial de servicios ─────────────────────
@@ -106,14 +132,29 @@ async def historial(
 
 # ── Métricas del taller ───────────────────────────────────
 @router.get("/metricas/taller")
-async def metricas_taller():
-    return {"msg": "metricas del taller"}
+async def metricas_taller(
+    desde: Optional[datetime] = Query(None),
+    hasta: Optional[datetime] = Query(None),
+    current_user: User = Depends(require_role("taller")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.talleres_tecnicos.service import get_taller_by_user
+
+    taller = await get_taller_by_user(current_user.id, db)
+    resumen = await service.obtener_metricas(db, desde, hasta, taller_id=taller.id)
+    return schemas.MetricasResumenResponse(**resumen)
 
 
 # ── Métricas globales ─────────────────────────────────────
 @router.get("/metricas/globales")
-async def metricas_globales():
-    return {"msg": "metricas globales"}
+async def metricas_globales(
+    desde: Optional[datetime] = Query(None),
+    hasta: Optional[datetime] = Query(None),
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    resumen = await service.obtener_metricas(db, desde, hasta, taller_id=None)
+    return schemas.MetricasResumenResponse(**resumen)
 
 
 # ── CU35 - Auditoría / Bitácora ────────────────────────────

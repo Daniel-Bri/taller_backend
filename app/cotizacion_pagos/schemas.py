@@ -76,8 +76,8 @@ class PagoCreate(BaseModel):
     @field_validator("metodo")
     @classmethod
     def metodo_valido(cls, v: str) -> str:
-        if v not in ("efectivo", "transferencia", "tarjeta"):
-            raise ValueError("Método debe ser 'efectivo', 'transferencia' o 'tarjeta'")
+        if v not in ("efectivo", "qr"):
+            raise ValueError("Método debe ser 'efectivo' o 'qr'")
         return v
 
 

@@ -208,3 +208,174 @@ async def exportar_csv(
             f'{e.ip or ""},"{det}"'
         )
     return "\n".join(lines)
+
+
+async def listar_calificaciones_pendientes(cliente_id: int, db: AsyncSession) -> list[dict]:
+    from app.acceso_registro.models import Taller
+    from app.emergencias.models import Incidente
+    from app.talleres_tecnicos.models import Asignacion
+    from app.reportes.models import CalificacionServicio
+
+    res = await db.execute(
+        select(
+            Asignacion.id,
+            Asignacion.incidente_id,
+            Asignacion.taller_id,
+            Taller.nombre,
+            Asignacion.created_at,
+        )
+        .join(Incidente, Incidente.id == Asignacion.incidente_id)
+        .join(Taller, Taller.id == Asignacion.taller_id)
+        .outerjoin(CalificacionServicio, CalificacionServicio.asignacion_id == Asignacion.id)
+        .where(
+            Incidente.usuario_id == cliente_id,
+            Asignacion.estado == "finalizado",
+            CalificacionServicio.id.is_(None),
+        )
+        .order_by(desc(Asignacion.created_at))
+    )
+    return [
+        {
+            "asignacion_id": r[0],
+            "incidente_id": r[1],
+            "taller_id": r[2],
+            "taller_nombre": r[3],
+            "fecha_finalizacion": r[4],
+        }
+        for r in res.all()
+    ]
+
+
+async def crear_calificacion(
+    cliente_id: int,
+    asignacion_id: int,
+    puntuacion: int,
+    resena: Optional[str],
+    db: AsyncSession,
+):
+    from fastapi import HTTPException
+    from app.acceso_registro.models import Taller
+    from app.emergencias.models import Incidente
+    from app.talleres_tecnicos.models import Asignacion
+    from app.reportes.models import CalificacionServicio
+
+    if puntuacion < 1 or puntuacion > 5:
+        raise HTTPException(status_code=400, detail="La puntuación debe estar entre 1 y 5")
+
+    asig_res = await db.execute(
+        select(Asignacion, Incidente.usuario_id, Taller.id)
+        .join(Incidente, Incidente.id == Asignacion.incidente_id)
+        .join(Taller, Taller.id == Asignacion.taller_id)
+        .where(Asignacion.id == asignacion_id)
+    )
+    row = asig_res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Asignación no encontrada")
+
+    asignacion, incidente_usuario_id, taller_id = row
+    if incidente_usuario_id != cliente_id:
+        raise HTTPException(status_code=403, detail="No puedes calificar esta asignación")
+    if asignacion.estado != "finalizado":
+        raise HTTPException(status_code=400, detail="Solo puedes calificar servicios finalizados")
+
+    existing = await db.execute(
+        select(CalificacionServicio).where(CalificacionServicio.asignacion_id == asignacion_id)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Esta asignación ya fue calificada")
+
+    cal = CalificacionServicio(
+        asignacion_id=asignacion_id,
+        cliente_id=cliente_id,
+        taller_id=taller_id,
+        puntuacion=puntuacion,
+        resena=(resena or "").strip() or None,
+    )
+    db.add(cal)
+    await db.commit()
+    await db.refresh(cal)
+    return cal
+
+
+async def obtener_metricas(
+    db: AsyncSession,
+    desde: Optional[datetime],
+    hasta: Optional[datetime],
+    taller_id: Optional[int] = None,
+) -> dict:
+    from app.cotizacion_pagos.models import Cotizacion, Pago
+    from app.talleres_tecnicos.models import Asignacion
+    from app.reportes.models import CalificacionServicio
+
+    pago_filters = []
+    asig_filters = []
+    cal_filters = []
+
+    if taller_id is not None:
+        pago_filters.append(Cotizacion.taller_id == taller_id)
+        asig_filters.append(Asignacion.taller_id == taller_id)
+        cal_filters.append(CalificacionServicio.taller_id == taller_id)
+    if desde:
+        pago_filters.append(Pago.created_at >= desde)
+        asig_filters.append(Asignacion.created_at >= desde)
+        cal_filters.append(CalificacionServicio.created_at >= desde)
+    if hasta:
+        pago_filters.append(Pago.created_at <= hasta)
+        asig_filters.append(Asignacion.created_at <= hasta)
+        cal_filters.append(CalificacionServicio.created_at <= hasta)
+
+    pagos_q = (
+        select(Pago.id, Pago.monto, Pago.metodo, Pago.created_at, Pago.cotizacion_id, Cotizacion.incidente_id)
+        .join(Cotizacion, Cotizacion.id == Pago.cotizacion_id)
+        .order_by(desc(Pago.created_at))
+    )
+    if pago_filters:
+        pagos_q = pagos_q.where(and_(*pago_filters))
+    pagos_res = await db.execute(pagos_q)
+    pagos = pagos_res.all()
+
+    servicios_q = select(func.count()).select_from(Asignacion)
+    if asig_filters:
+        servicios_q = servicios_q.where(and_(*asig_filters))
+    total_servicios = (await db.execute(servicios_q)).scalar_one()
+
+    finalizados_q = select(func.count()).select_from(Asignacion).where(Asignacion.estado == "finalizado")
+    if asig_filters:
+        finalizados_q = finalizados_q.where(and_(*asig_filters))
+    servicios_finalizados = (await db.execute(finalizados_q)).scalar_one()
+
+    cal_q = select(func.avg(CalificacionServicio.puntuacion), func.count(CalificacionServicio.id))
+    if cal_filters:
+        cal_q = cal_q.where(and_(*cal_filters))
+    avg_cal, total_cal = (await db.execute(cal_q)).first()
+
+    ingresos_brutos = round(sum(float(p[1]) for p in pagos), 2)
+    comision = round(ingresos_brutos * 0.10, 2)
+    netos = round(ingresos_brutos - comision, 2)
+    pagados = len(pagos)
+    ticket = round(ingresos_brutos / pagados, 2) if pagados else 0.0
+
+    return {
+        "desde": desde,
+        "hasta": hasta,
+        "total_servicios": int(total_servicios or 0),
+        "servicios_finalizados": int(servicios_finalizados or 0),
+        "servicios_pagados": pagados,
+        "ingresos_brutos": ingresos_brutos,
+        "comision_plataforma": comision,
+        "ingresos_netos": netos,
+        "ticket_promedio": ticket,
+        "promedio_calificacion": round(float(avg_cal), 2) if avg_cal is not None else None,
+        "total_calificaciones": int(total_cal or 0),
+        "detalle_pagos": [
+            {
+                "pago_id": p[0],
+                "monto": float(p[1]),
+                "metodo": p[2],
+                "fecha": p[3].isoformat() if p[3] else None,
+                "cotizacion_id": p[4],
+                "incidente_id": p[5],
+            }
+            for p in pagos
+        ],
+    }
