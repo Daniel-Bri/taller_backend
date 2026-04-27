@@ -7,4 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN mkdir -p uploads/fotos uploads/audio
+
 CMD ["sh", "-c", "python seed.py; uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
