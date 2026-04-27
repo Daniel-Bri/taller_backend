@@ -46,7 +46,43 @@ async def enviar_mensaje(
     current_user: User = Depends(require_role("taller", "cliente", "tecnico")),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.enviar_mensaje(current_user.id, current_user.role, data, db)
+    from sqlalchemy import select as _sel
+    msg = await service.enviar_mensaje(current_user.id, current_user.role, data, db)
+
+    try:
+        from app.notificaciones.service import notificar_usuario
+        from app.talleres_tecnicos.models import Asignacion as _Asig
+        from app.emergencias.models import Incidente as _Inc
+        from app.acceso_registro.models import Taller as _Taller
+
+        asig_r = await db.execute(_sel(_Asig).where(_Asig.id == data.asignacion_id))
+        asig = asig_r.scalar_one_or_none()
+        if asig:
+            remitente = msg.remitente or "Nuevo mensaje"
+            preview   = data.contenido[:60] + ("…" if len(data.contenido) > 60 else "")
+
+            if current_user.role == "cliente":
+                # Notificar al taller
+                t_r = await db.execute(_sel(_Taller.usuario_id).where(_Taller.id == asig.taller_id))
+                t_row = t_r.first()
+                if t_row:
+                    await notificar_usuario(
+                        t_row[0], f"💬 {remitente}", preview, db,
+                        {"tipo": "mensaje", "asignacion_id": str(asig.id)},
+                    )
+            else:
+                # Notificar al cliente
+                i_r = await db.execute(_sel(_Inc.usuario_id).where(_Inc.id == asig.incidente_id))
+                i_row = i_r.first()
+                if i_row:
+                    await notificar_usuario(
+                        i_row[0], f"💬 {remitente}", preview, db,
+                        {"tipo": "mensaje", "asignacion_id": str(asig.id)},
+                    )
+    except Exception:
+        pass
+
+    return msg
 
 
 @router.get(

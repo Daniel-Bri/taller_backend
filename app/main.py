@@ -16,6 +16,7 @@ import app.talleres_tecnicos.models  # noqa: F401  (Tecnico, Asignacion)
 import app.cotizacion_pagos.models   # noqa: F401  (Cotizacion, Pago)
 import app.comunicacion.models       # noqa: F401  (Mensaje)
 import app.reportes.models           # noqa: F401  (BitacoraEvento)
+import app.notificaciones.models     # noqa: F401  (DispositivoToken)
 
 from app.acceso_registro.router  import router as acceso_router
 from app.talleres_tecnicos.router import router as talleres_router
@@ -25,6 +26,7 @@ from app.cotizacion_pagos.router import router as pagos_router
 from app.comunicacion.router     import router as comunicacion_router
 from app.reportes.router         import router as reportes_router
 from app.ia.router               import router as ia_router
+from app.notificaciones.router   import router as notificaciones_router
 
 
 @asynccontextmanager
@@ -85,6 +87,7 @@ app.include_router(pagos_router,        prefix="/api/pagos",        tags=["Cotiz
 app.include_router(comunicacion_router, prefix="/api/comunicacion", tags=["Comunicación"])
 app.include_router(reportes_router,     prefix="/api/reportes",     tags=["Reportes"])
 app.include_router(ia_router,           prefix="/api/ia",           tags=["Inteligencia Artificial"])
+app.include_router(notificaciones_router, prefix="/api/notificaciones", tags=["Notificaciones"])
 
 
 @app.get("/")

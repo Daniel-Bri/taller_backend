@@ -199,7 +199,7 @@ async def aceptar(
     await db.flush()
     await db.commit()
 
-    return AsignacionResponse(
+    response = AsignacionResponse(
         id=asignacion.id,
         incidente_id=asignacion.incidente_id,
         taller_id=asignacion.taller_id,
@@ -209,6 +209,21 @@ async def aceptar(
         observacion=asignacion.observacion,
         created_at=ahora,
     )
+
+    try:
+        from app.notificaciones.service import notificar_usuario
+        eta_txt = f" · ETA {eta_final} min" if eta_final else ""
+        await notificar_usuario(
+            incidente.usuario_id,
+            "✅ Solicitud aceptada",
+            f"Un taller aceptó tu solicitud #{incidente_id}{eta_txt}",
+            db,
+            {"tipo": "solicitud_aceptada", "incidente_id": str(incidente_id)},
+        )
+    except Exception:
+        pass
+
+    return response
 
 
 # ── CU14 – Ver detalle del incidente ─────────────────────────────────────
@@ -276,6 +291,25 @@ async def cancelar(
         asig.estado = "cancelado"
 
     await db.commit()
+
+    # Notificar al taller que el cliente canceló
+    try:
+        from app.notificaciones.service import notificar_usuario
+        from app.acceso_registro.models import Taller as _Taller
+        for asig in asig_res.scalars():
+            t_res = await db.execute(select(_Taller.usuario_id).where(_Taller.id == asig.taller_id))
+            t_row = t_res.first()
+            if t_row:
+                await notificar_usuario(
+                    t_row[0],
+                    "❌ Solicitud cancelada",
+                    f"El cliente canceló el incidente #{solicitud_id}",
+                    db,
+                    {"tipo": "solicitud_cancelada", "incidente_id": str(solicitud_id)},
+                )
+    except Exception:
+        pass
+
     return {"id": incidente.id, "estado": incidente.estado, "msg": "Solicitud cancelada correctamente"}
 
 
@@ -314,6 +348,21 @@ async def rechazar(
         incidente.estado = "pendiente"
 
     await db.commit()
+
+    # Notificar al cliente que el taller rechazó
+    try:
+        from app.notificaciones.service import notificar_usuario
+        if incidente:
+            await notificar_usuario(
+                incidente.usuario_id,
+                "🔄 Taller rechazó la solicitud",
+                f"El taller rechazó el incidente #{solicitud_id}. Buscando otro taller...",
+                db,
+                {"tipo": "solicitud_rechazada", "incidente_id": str(solicitud_id)},
+            )
+    except Exception:
+        pass
+
     return {
         "asignacion_id": asignacion.id,
         "incidente_id":  solicitud_id,

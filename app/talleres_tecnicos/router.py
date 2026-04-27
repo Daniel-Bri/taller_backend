@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
 from app.db.session import get_db
 from app.core.dependencies import get_current_user, require_role
 from app.acceso_registro.models import User
@@ -113,6 +114,34 @@ async def actualizar_estado_asignacion(
     asignacion = await service.actualizar_estado_asignacion(
         asignacion_id, current_user.id, current_user.role, data, db
     )
+
+    try:
+        from app.notificaciones.service import notificar_usuario
+        from app.emergencias.models import Incidente as _Inc
+        inc_r = await db.execute(
+            select(_Inc.usuario_id).where(_Inc.id == asignacion.incidente_id)
+        )
+        inc_row = inc_r.first()
+        if inc_row:
+            _MENSAJES = {
+                "en_camino":     ("🚗 Técnico en camino",     "El técnico está en camino a tu ubicación"),
+                "en_sitio":      ("📍 Técnico llegó",         "El técnico llegó a tu ubicación"),
+                "en_reparacion": ("🔧 Reparación en curso",   "Tu vehículo está siendo reparado"),
+                "finalizado":    ("✅ Servicio completado",   "El servicio fue completado exitosamente"),
+                "cancelado":     ("❌ Servicio cancelado",    "La asignación fue cancelada"),
+            }
+            titulo, cuerpo = _MENSAJES.get(
+                data.estado,
+                ("📋 Estado actualizado", f"Tu solicitud cambió a: {data.estado}")
+            )
+            await notificar_usuario(
+                inc_row[0], titulo, cuerpo, db,
+                {"tipo": "estado_actualizado", "estado": data.estado,
+                 "asignacion_id": str(asignacion_id)},
+            )
+    except Exception:
+        pass
+
     return schemas.AsignacionResponse.model_validate(asignacion)
 
 

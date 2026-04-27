@@ -27,9 +27,28 @@ async def generar_cotizacion(
     current_user: User = Depends(require_role("taller")),
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import select as _sel
     from app.talleres_tecnicos.service import get_taller_by_user
     taller = await get_taller_by_user(current_user.id, db)
     cotizacion = await service.generar_cotizacion(taller.id, data, db)
+
+    try:
+        from app.notificaciones.service import notificar_usuario
+        from app.emergencias.models import Incidente as _Inc
+        i_r = await db.execute(_sel(_Inc.usuario_id).where(_Inc.id == cotizacion.incidente_id))
+        i_row = i_r.first()
+        if i_row:
+            monto = f"Bs. {cotizacion.monto_estimado:.2f}" if cotizacion.monto_estimado else ""
+            await notificar_usuario(
+                i_row[0],
+                "📋 Nueva cotización recibida",
+                f"El taller envió una cotización {monto}. Revísala en la app.",
+                db,
+                {"tipo": "nueva_cotizacion", "cotizacion_id": str(cotizacion.id)},
+            )
+    except Exception:
+        pass
+
     return schemas.CotizacionResponse.model_validate(cotizacion)
 
 
